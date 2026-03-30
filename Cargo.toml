@@ -1,0 +1,11 @@
+[workspace]
+members = []
+resolver = "2"
+
+[package]
+name = "privacysuite-core-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Zero-knowledge cryptographic foundation for BoomLeft applications"
+authors = ["BoomLeft LLC"]
+license = "Proprietary"
