@@ -216,7 +216,7 @@ pub fn sign(keypair: &SigningKeypair, message: &[u8]) -> ed25519_dalek::Signatur
 }
 
 /// Verifies an Ed25519 `signature` over `message` against the given
-/// [`VerifyingKey`].
+/// [`ed25519_dalek::VerifyingKey`].
 ///
 /// # Errors
 ///

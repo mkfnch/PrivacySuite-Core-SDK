@@ -1,6 +1,6 @@
 //! End-to-end encrypted CRDT documents backed by Automerge.
 //!
-//! [`EncryptedDocument`] wraps an Automerge [`AutoCommit`](automerge::AutoCommit)
+//! [`EncryptedDocument`] wraps an Automerge `AutoCommit`
 //! document and provides ergonomic key-value operations on the root map.
 //! The relay server never sees document content -- it only passes encrypted
 //! blobs produced by [`EncryptedDocument::save_encrypted`] between peers.
