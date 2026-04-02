@@ -51,11 +51,12 @@
 #![deny(unused_imports)]
 #![deny(unreachable_pub)]
 
+pub mod crypto;
+pub mod error;
+
 // Future modules — uncomment as each is implemented:
-// pub mod crypto;
 // pub mod storage;
 // pub mod crdt;
 // pub mod sync;
 // pub mod networking;
 // pub mod auth;
-// pub mod error;
