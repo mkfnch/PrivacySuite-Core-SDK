@@ -18,54 +18,29 @@ use rusqlite::Connection;
 use zeroize::Zeroize;
 
 use crate::crypto::keys::VaultKey;
-use crate::error::CryptoError;
-
-// ---------------------------------------------------------------------------
-// Error type
-// ---------------------------------------------------------------------------
 
 /// Errors returned by encrypted storage operations.
 #[derive(Debug)]
 pub enum StorageError {
     /// Database operation failed.
     Database(String),
-    /// Crypto operation failed.
-    Crypto(CryptoError),
 }
 
 impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Database(msg) => write!(f, "storage error: {msg}"),
-            Self::Crypto(e) => write!(f, "crypto error: {e}"),
         }
     }
 }
 
-impl std::error::Error for StorageError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Database(_) => None,
-            Self::Crypto(e) => Some(e),
-        }
-    }
-}
+impl std::error::Error for StorageError {}
 
 impl From<rusqlite::Error> for StorageError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Database(err.to_string())
     }
 }
-
-impl From<CryptoError> for StorageError {
-    fn from(err: CryptoError) -> Self {
-        Self::Crypto(err)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Encrypted database
-// ---------------------------------------------------------------------------
 
 /// An encrypted `SQLCipher` database handle.
 ///
@@ -85,9 +60,6 @@ impl fmt::Debug for EncryptedDb {
 /// Apply the encryption key and hardened pragmas to a freshly opened
 /// connection.
 fn apply_key(conn: &Connection, key: &VaultKey) -> Result<(), StorageError> {
-    // PEN-01/PEN-08: Build the PRAGMA statement in a single zeroizable buffer.
-    // We avoid format!() which would create an intermediate String containing
-    // the key that we cannot zeroize.
     let mut pragma = String::with_capacity(80);
     pragma.push_str("PRAGMA key = \"x'");
     for b in key.as_bytes() {
@@ -195,10 +167,6 @@ impl EncryptedDb {
         Ok(results)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

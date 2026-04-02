@@ -28,10 +28,6 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::CryptoError;
 
-// ---------------------------------------------------------------------------
-// Cipher-suite definition
-// ---------------------------------------------------------------------------
-
 /// Concrete OPAQUE cipher suite used throughout `PrivacySuite`.
 ///
 /// * OPRF + KE group: Ristretto255
@@ -46,10 +42,6 @@ impl CipherSuite for PrivacySuite {
     type KeyExchange = opaque_ke::key_exchange::tripledh::TripleDh;
     type Ksf = Identity;
 }
-
-// ---------------------------------------------------------------------------
-// Error type
-// ---------------------------------------------------------------------------
 
 /// Errors arising from the OPAQUE authentication flow.
 #[derive(Debug)]
@@ -96,10 +88,6 @@ impl From<ProtocolError> for AuthError {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Session key wrapper (zeroizing)
-// ---------------------------------------------------------------------------
-
 /// An authenticated session key produced by a successful OPAQUE login.
 ///
 /// The inner bytes are zeroised on drop and never appear in `Debug` output.
@@ -121,10 +109,6 @@ impl fmt::Debug for SessionKey {
         f.write_str("SessionKey(***)")
     }
 }
-
-// ---------------------------------------------------------------------------
-// Opaque state wrappers
-// ---------------------------------------------------------------------------
 
 /// Client-side state kept between `registration_start` and
 /// `registration_finish`.
@@ -166,10 +150,6 @@ impl fmt::Debug for ClientLoginState {
 /// A password buffer that zeroises itself on drop.
 #[derive(Zeroize, ZeroizeOnDrop)]
 struct ZeroizingPassword(Vec<u8>);
-
-// ---------------------------------------------------------------------------
-// Client-side API
-// ---------------------------------------------------------------------------
 
 /// Begin OPAQUE registration.
 ///
@@ -271,10 +251,6 @@ pub fn login_finish(
         bytes: result.session_key.to_vec(),
     })
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

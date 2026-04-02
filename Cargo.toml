@@ -44,17 +44,12 @@ tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "time", "ma
 hickory-resolver = { version = "0.24", features = ["dns-over-https-rustls", "tokio-runtime"] }
 tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
-tokio-native-tls = "0.3"
 arti-client = { version = "0.25", default-features = false, features = ["tokio", "native-tls"] }
 tor-rtcompat = { version = "0.25", features = ["tokio", "native-tls"] }
 
 # --- Serialization ---
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-# --- Certificate pinning ---
-rustls = { version = "0.23", default-features = false }
-webpki = { version = "0.22", features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3"

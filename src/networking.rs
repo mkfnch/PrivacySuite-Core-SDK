@@ -26,10 +26,6 @@ use hickory_resolver::config::{
 use hickory_resolver::TokioAsyncResolver;
 use tor_rtcompat::PreferredRuntime;
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
 /// Errors arising from privacy-networking operations.
 ///
 /// Variants are intentionally descriptive enough for callers to decide on a
@@ -61,10 +57,6 @@ impl fmt::Display for NetworkError {
 
 impl std::error::Error for NetworkError {}
 
-// ---------------------------------------------------------------------------
-// Privacy tier
-// ---------------------------------------------------------------------------
-
 /// Selects the network-privacy tier for a given operation.
 ///
 /// Higher tiers provide stronger anonymity but incur additional latency.
@@ -80,10 +72,6 @@ pub enum PrivacyTier {
     /// Full geographic anonymization through onion-routed circuits.
     Maximum,
 }
-
-// ---------------------------------------------------------------------------
-// Tier 1: DNS-over-HTTPS
-// ---------------------------------------------------------------------------
 
 /// A DNS resolver that sends all queries over HTTPS (`DoH`), preventing the
 /// ISP from observing plaintext DNS traffic.
@@ -154,10 +142,6 @@ impl PrivacyDns {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tier 2: Oblivious HTTP (placeholder)
-// ---------------------------------------------------------------------------
-
 /// Oblivious HTTP (OHTTP) relay — **Tier 2 privacy**.
 ///
 /// OHTTP ([RFC 9458](https://www.rfc-editor.org/rfc/rfc9458)) separates
@@ -201,10 +185,6 @@ impl ObliviousRelay {
         ))
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tier 3: Tor via Arti
-// ---------------------------------------------------------------------------
 
 /// Type alias for the concrete Arti Tor client with the preferred runtime.
 type ArtiTorClientConcrete = ArtiTorClient<PreferredRuntime>;
@@ -262,10 +242,6 @@ impl TorClient {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Certificate pinning
-// ---------------------------------------------------------------------------
-
 /// A set of SHA-256 certificate pins for TLS certificate pinning.
 ///
 /// Certificate pinning defends against compromised or coerced certificate
@@ -287,7 +263,7 @@ impl CertificatePinner {
 
     /// Returns `true` if `cert_hash` matches one of the pinned certificates.
     ///
-    /// PEN-09: Uses constant-time comparison against every pin to prevent
+    /// Uses constant-time comparison against every pin to prevent
     /// timing side-channels that could reveal which pins are configured.
     #[must_use]
     pub fn verify(&self, cert_hash: &[u8; 32]) -> bool {
@@ -299,10 +275,6 @@ impl CertificatePinner {
         found == 1
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

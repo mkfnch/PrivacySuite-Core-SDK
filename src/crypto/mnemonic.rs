@@ -42,10 +42,6 @@ const WORDLIST_SHA256: [u8; 32] = [
     0xef, 0xf3, 0xa2, 0xed, 0x3b, 0x24, 0xdb, 0xda,
 ];
 
-// ---------------------------------------------------------------------------
-// Cached, integrity-verified wordlist
-// ---------------------------------------------------------------------------
-
 /// Global wordlist, verified and cached on first access.
 static WORDLIST: OnceLock<Result<Vec<&'static str>, ()>> = OnceLock::new();
 
@@ -68,10 +64,6 @@ fn wordlist() -> Result<&'static [&'static str], CryptoError> {
         Err(()) => Err(CryptoError::InvalidMnemonic),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Constant-time word lookup
-// ---------------------------------------------------------------------------
 
 /// Finds the index of `word` in the wordlist in constant time.
 ///
@@ -107,10 +99,6 @@ fn ct_select(condition: u8, a: usize, b: usize) -> usize {
     let mask = (condition as usize).wrapping_neg();
     (a & mask) | (b & !mask)
 }
-
-// ---------------------------------------------------------------------------
-// Bit packing (stack-based, no heap allocation)
-// ---------------------------------------------------------------------------
 
 /// Packs entropy + SHA-256 checksum byte into 33 bytes.
 fn pack_entropy(entropy: &[u8; ENTROPY_BYTES]) -> [u8; PACKED_LEN] {
@@ -158,10 +146,6 @@ fn unpack_indices(indices: &[usize; WORD_COUNT]) -> ([u8; ENTROPY_BYTES], u8) {
     packed.zeroize();
     (entropy, checksum)
 }
-
-// ---------------------------------------------------------------------------
-// Mnemonic
-// ---------------------------------------------------------------------------
 
 /// A 24-word BIP39 mnemonic recovery phrase.
 ///

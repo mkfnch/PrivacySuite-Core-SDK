@@ -30,10 +30,6 @@ use crate::crypto::keys::VaultKey;
 /// ciphertext relocation across protocol contexts.
 const CRDT_AAD: &[u8] = b"privacysuite:crdt:v1";
 
-// ---------------------------------------------------------------------------
-// Error
-// ---------------------------------------------------------------------------
-
 /// Errors produced by CRDT document operations.
 #[derive(Debug)]
 pub enum CrdtError {
@@ -65,10 +61,6 @@ impl From<automerge::AutomergeError> for CrdtError {
         Self::Automerge(err.to_string())
     }
 }
-
-// ---------------------------------------------------------------------------
-// EncryptedDocument
-// ---------------------------------------------------------------------------
 
 /// An Automerge CRDT document that is always encrypted at rest.
 ///
@@ -159,7 +151,6 @@ impl EncryptedDocument {
     ///
     /// Returns [`CrdtError::Encryption`] if AEAD encryption fails.
     pub fn save_encrypted(&mut self, key: &VaultKey) -> Result<Vec<u8>, CrdtError> {
-        // PEN-07: Zeroize the plaintext serialization after encryption.
         let mut plaintext = self.doc.save();
         let result = encrypt(key, &plaintext, CRDT_AAD).map_err(|_| CrdtError::Encryption);
         plaintext.zeroize();
@@ -180,7 +171,6 @@ impl EncryptedDocument {
         let mut plaintext = decrypt(key, data, CRDT_AAD).map_err(|_| CrdtError::Decryption)?;
         let result =
             AutoCommit::load(&plaintext).map_err(|e| CrdtError::Automerge(e.to_string()));
-        // PEN-07: Zeroize decrypted plaintext after loading into Automerge.
         plaintext.zeroize();
         Ok(Self { doc: result? })
     }
@@ -247,10 +237,6 @@ impl Default for EncryptedDocument {
         Self::new()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

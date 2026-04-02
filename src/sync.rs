@@ -33,10 +33,6 @@ use crate::crypto::keys::VaultKey;
 /// Associated data bound to every sync encryption operation.
 const SYNC_AAD: &[u8] = b"privacysuite:sync:v1";
 
-// ---------------------------------------------------------------------------
-// SyncError
-// ---------------------------------------------------------------------------
-
 /// Errors that can occur during sync operations.
 #[derive(Debug)]
 pub enum SyncError {
@@ -66,10 +62,6 @@ impl fmt::Display for SyncError {
 
 impl std::error::Error for SyncError {}
 
-// ---------------------------------------------------------------------------
-// SyncMessage
-// ---------------------------------------------------------------------------
-
 /// Serialisable envelope for the sync protocol.
 ///
 /// The `payload` contains either plaintext CRDT data (before encryption) or
@@ -79,10 +71,6 @@ pub struct SyncMessage {
     /// Encrypted (or plaintext) CRDT sync data.
     pub payload: Vec<u8>,
 }
-
-// ---------------------------------------------------------------------------
-// SyncTransport trait
-// ---------------------------------------------------------------------------
 
 /// Async transport for sending and receiving [`SyncMessage`]s.
 ///
@@ -119,10 +107,6 @@ pub trait SyncTransport: Send {
         &mut self,
     ) -> impl std::future::Future<Output = Result<(), SyncError>> + Send;
 }
-
-// ---------------------------------------------------------------------------
-// RelayTransport (WebSocket)
-// ---------------------------------------------------------------------------
 
 /// WebSocket relay transport backed by `tokio-tungstenite`.
 ///
@@ -191,10 +175,6 @@ impl SyncTransport for RelayTransport {
     }
 }
 
-// ---------------------------------------------------------------------------
-// EncryptedTransport
-// ---------------------------------------------------------------------------
-
 /// Wraps any [`SyncTransport`], encrypting outbound messages and decrypting
 /// inbound messages with XChaCha20-Poly1305.
 ///
@@ -239,8 +219,6 @@ impl<T: SyncTransport + std::fmt::Debug> SyncTransport for EncryptedTransport<T>
     async fn recv(&mut self) -> Result<SyncMessage, SyncError> {
         let encrypted_msg = self.inner.recv().await?;
         let key = VaultKey::from_bytes(self.key_bytes);
-        // PEN-03: Move plaintext directly into the message — no clone.
-        // The caller is responsible for zeroizing the payload when done.
         let plaintext = aead::decrypt(&key, &encrypted_msg.payload, SYNC_AAD)
             .map_err(|_| SyncError::Decryption)?;
 
@@ -251,10 +229,6 @@ impl<T: SyncTransport + std::fmt::Debug> SyncTransport for EncryptedTransport<T>
         self.inner.close().await
     }
 }
-
-// ---------------------------------------------------------------------------
-// LanDiscovery
-// ---------------------------------------------------------------------------
 
 /// Placeholder for LAN peer discovery via mDNS / broadcast.
 ///
@@ -301,10 +275,6 @@ impl Default for LanDiscovery {
         Self::new()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

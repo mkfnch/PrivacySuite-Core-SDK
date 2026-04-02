@@ -25,10 +25,6 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use crate::crypto::keys::{VaultKey, KEY_LEN};
 use crate::error::CryptoError;
 
-// ---------------------------------------------------------------------------
-// X25519 device pairing
-// ---------------------------------------------------------------------------
-
 /// An X25519 keypair used during device pairing.
 ///
 /// The secret key is zeroized when the struct is dropped.
@@ -72,10 +68,6 @@ impl Drop for EphemeralKeypair {
         self.public = PublicKey::from(&self.secret);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Shared secret
-// ---------------------------------------------------------------------------
 
 /// A 32-byte raw X25519 shared secret.
 ///
@@ -146,10 +138,6 @@ pub fn derive_pairing_key(shared: &SharedSecret, context: &[u8]) -> Result<Vault
     Ok(VaultKey::from_bytes(key_bytes))
 }
 
-// ---------------------------------------------------------------------------
-// QR helpers
-// ---------------------------------------------------------------------------
-
 /// Base64-encodes a 32-byte X25519 public key for display as a QR code.
 #[must_use]
 pub fn encode_pairing_qr(public_key: &PublicKey) -> String {
@@ -175,10 +163,6 @@ pub fn decode_pairing_qr(data: &str) -> Result<PublicKey, CryptoError> {
         })?;
     Ok(PublicKey::from(bytes))
 }
-
-// ---------------------------------------------------------------------------
-// Ed25519 signing
-// ---------------------------------------------------------------------------
 
 /// An Ed25519 signing keypair.
 ///
@@ -250,10 +234,6 @@ pub fn verify(
         .verify(message, signature)
         .map_err(|_| CryptoError::SignatureInvalid)
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
