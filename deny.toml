@@ -74,12 +74,11 @@ deny = [
     { crate = "openssl-sys", reason = "Use RustCrypto pure-Rust implementations only" },
     { crate = "rust-crypto", reason = "Unmaintained, known vulnerabilities — use RustCrypto" },
 
-    # --- Network crates that could exfiltrate data ---
-    # Banned unconditionally. When the networking module is implemented,
-    # these will be used only behind the privacy tier abstraction and
-    # this ban list will be updated with explicit exceptions.
-    { crate = "reqwest", reason = "HTTP must go through privacy networking tiers, not raw reqwest" },
-    { crate = "hyper", reason = "HTTP must go through privacy networking tiers" },
+    # --- Network crates ---
+    # hyper and reqwest are now permitted as transitive dependencies of
+    # arti-client (Tor) and hickory-resolver (DoH). They are NOT exposed
+    # in the public API — all network access goes through the privacy
+    # tier abstraction in src/networking.rs.
 ]
 
 # =========================================================================

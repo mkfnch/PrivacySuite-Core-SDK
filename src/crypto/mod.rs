@@ -3,6 +3,7 @@
 //! - **[`keys`]** — Argon2id key derivation, zeroizing key and salt types.
 //! - **[`aead`]** — XChaCha20-Poly1305 authenticated encryption.
 //! - **[`mnemonic`]** — BIP39 24-word recovery phrase generation and recovery.
+//! - **[`pairing`]** — X25519 device pairing, BLAKE3 key derivation, Ed25519 signing.
 //!
 //! # Example
 //!
@@ -26,3 +27,4 @@
 pub mod aead;
 pub mod keys;
 pub mod mnemonic;
+pub mod pairing;

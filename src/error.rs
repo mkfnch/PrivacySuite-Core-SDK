@@ -34,6 +34,10 @@ pub enum CryptoError {
         /// Actual length in bytes.
         actual: usize,
     },
+    /// Base64 decoding failed.
+    Base64Decode,
+    /// Ed25519 signature verification failed.
+    SignatureInvalid,
 }
 
 impl fmt::Display for CryptoError {
@@ -47,6 +51,8 @@ impl fmt::Display for CryptoError {
             Self::InvalidLength { context, expected, actual } => {
                 write!(f, "invalid {context} length: expected {expected}, got {actual}")
             }
+            Self::Base64Decode => f.write_str("base64 decoding failed"),
+            Self::SignatureInvalid => f.write_str("signature verification failed"),
         }
     }
 }

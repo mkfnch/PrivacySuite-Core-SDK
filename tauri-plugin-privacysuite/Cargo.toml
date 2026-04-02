@@ -1,0 +1,15 @@
+[package]
+name = "tauri-plugin-privacysuite"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Tauri 2.x plugin wrapping PrivacySuite Core SDK"
+authors = ["BoomLeft LLC"]
+license = "Proprietary"
+
+[dependencies]
+privacysuite-core-sdk = { path = ".." }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# tauri = "2"  # Uncomment when building in a Tauri project
+# tauri-specta = "2"  # Uncomment for TypeScript binding generation
