@@ -1,0 +1,89 @@
+# cargo-deny configuration for PrivacySuite Core SDK
+# Run: cargo deny check
+#
+# This enforces supply-chain safety for a zero-trust cryptographic SDK.
+# Every dependency is a potential vector for data exfiltration, so we are
+# maximally restrictive.
+
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-linux-android",
+    "aarch64-apple-ios",
+]
+all-features = true
+
+# =========================================================================
+# Advisories — reject any crate with a known security vulnerability
+# =========================================================================
+[advisories]
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "deny"
+notice = "warn"
+ignore = []
+
+# =========================================================================
+# Licenses — only allow licenses compatible with proprietary + privacy use
+# =========================================================================
+[licenses]
+unlicensed = "deny"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "BSL-1.0",
+]
+copyleft = "deny"        # No copyleft — proprietary SDK
+default = "deny"
+
+# =========================================================================
+# Bans — block specific crates that violate privacy guarantees
+# =========================================================================
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"         # No wildcard version specs — pin everything
+highlight = "all"
+
+deny = [
+    # --- Telemetry / analytics / crash reporting ---
+    # These crates collect or transmit user data, violating BoomLeft's
+    # zero-data-collection promise.
+    { crate = "sentry", reason = "Crash reporting transmits data off-device" },
+    { crate = "sentry-core", reason = "Crash reporting transmits data off-device" },
+    { crate = "opentelemetry", reason = "Telemetry collection violates zero-data policy" },
+    { crate = "opentelemetry_sdk", reason = "Telemetry collection violates zero-data policy" },
+    { crate = "tracing-opentelemetry", reason = "Telemetry export violates zero-data policy" },
+    { crate = "datadog", reason = "Analytics/APM transmits data off-device" },
+    { crate = "prometheus", reason = "Metrics collection violates zero-telemetry policy" },
+    { crate = "prometheus-client", reason = "Metrics collection violates zero-telemetry policy" },
+    { crate = "bugsnag", reason = "Crash reporting transmits data off-device" },
+    { crate = "rollbar", reason = "Error reporting transmits data off-device" },
+
+    # --- Unsafe/legacy crypto that weakens guarantees ---
+    { crate = "openssl", reason = "Use RustCrypto pure-Rust implementations only" },
+    { crate = "openssl-sys", reason = "Use RustCrypto pure-Rust implementations only" },
+    { crate = "rust-crypto", reason = "Unmaintained, known vulnerabilities — use RustCrypto" },
+
+    # --- Network crates that could exfiltrate data ---
+    { crate = "reqwest", wrappers = ["privacysuite-core-sdk"], reason = "HTTP must go through privacy networking tiers, not raw reqwest" },
+    { crate = "hyper", wrappers = ["privacysuite-core-sdk"], reason = "HTTP must go through privacy networking tiers" },
+]
+
+# =========================================================================
+# Sources — only allow crates from crates.io (no untrusted registries)
+# =========================================================================
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

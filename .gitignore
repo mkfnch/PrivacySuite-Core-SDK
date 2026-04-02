@@ -1,0 +1,50 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment and secrets — NEVER commit these
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+credentials.json
+secrets.toml
+*.secret
+
+# Stronghold vaults (contain encrypted key material)
+*.stronghold
+
+# SQLCipher databases (contain encrypted user data)
+*.sqlite
+*.sqlite3
+*.db
+
+# Crash dumps and core files (may contain key material in memory)
+core
+core.*
+*.dmp
+*.dump
+crash-*.log
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Coverage and profiling (may reference internal code paths)
+*.profraw
+*.profdata
+lcov.info
+tarpaulin-report.html
+coverage/

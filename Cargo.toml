@@ -6,6 +6,43 @@ resolver = "2"
 name = "privacysuite-core-sdk"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.75"
 description = "Zero-knowledge cryptographic foundation for BoomLeft applications"
 authors = ["BoomLeft LLC"]
 license = "Proprietary"
+repository = "https://github.com/mkfnch/PrivacySuite-Core-SDK"
+publish = false                       # Never publish to crates.io
+
+[lints.rust]
+unsafe_code = "forbid"                # No unsafe — all crypto via pure-Rust RustCrypto
+missing_docs = "warn"
+unused_results = "warn"
+elided_lifetimes_in_paths = "warn"
+
+[lints.clippy]
+# Security-critical lints — these catch code patterns that violate BoomLeft's
+# privacy-by-math guarantees.
+unwrap_used = "deny"                  # Force explicit error handling; panics leak stack traces
+expect_used = "deny"                  # Same rationale
+panic = "deny"                        # No panics in shipped code
+todo = "deny"                         # No incomplete code ships
+unimplemented = "deny"                # Same
+dbg_macro = "deny"                    # No debug output in production
+print_stdout = "deny"                 # No accidental stdout logging (telemetry-free)
+print_stderr = "deny"                 # No accidental stderr logging (telemetry-free)
+mem_forget = "deny"                   # Prevents skipping Drop/Zeroize on sensitive data
+large_stack_arrays = "warn"           # Catch accidental key-material stack spills
+indexing_slicing = "warn"             # Prefer .get() to avoid panics on out-of-bounds
+pedantic = { level = "warn", priority = -1 }
+
+[profile.release]
+opt-level = 3
+lto = "fat"                           # Full LTO for smaller binary + harder reverse-engineering
+codegen-units = 1                     # Single codegen unit for maximum optimization
+strip = "symbols"                     # Strip symbols — no debug info leaks in release
+panic = "abort"                       # Abort on panic — no unwinding, smaller binary, no stack traces
+overflow-checks = true                # Keep overflow checks even in release (security)
+
+[profile.dev]
+overflow-checks = true
+debug = true

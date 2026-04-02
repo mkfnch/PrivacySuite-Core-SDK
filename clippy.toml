@@ -1,0 +1,26 @@
+# PrivacySuite clippy configuration
+# Security-tuned thresholds for a cryptographic SDK
+
+# Flag functions with too many arguments — complex signatures invite misuse
+too-many-arguments-threshold = 5
+
+# Flag overly complex types — complex types in crypto code obscure review
+type-complexity-threshold = 200
+
+# Flag large enum variants that could waste stack space (key material exposure)
+enum-variant-size-threshold = 200
+
+# Disallowed methods — these bypass security invariants.
+# Patterns that must never appear in privacy-critical code.
+disallowed-methods = [
+    # stdout/stderr output — violates zero-telemetry guarantee
+    { path = "std::io::stdout", reason = "No stdout in production — violates zero-telemetry" },
+    { path = "std::io::stderr", reason = "No stderr in production — violates zero-telemetry" },
+
+    # Process abort/exit without cleanup can skip Zeroize drops
+    { path = "std::process::exit", reason = "Use controlled shutdown to ensure Zeroize drops run" },
+
+    # Env var access could leak configuration data
+    { path = "std::env::var", reason = "Configuration must come from encrypted Stronghold, not env vars" },
+    { path = "std::env::vars", reason = "Configuration must come from encrypted Stronghold, not env vars" },
+]
