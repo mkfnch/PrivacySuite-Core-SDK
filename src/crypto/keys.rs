@@ -16,6 +16,7 @@ use std::fmt;
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use rand::RngCore;
+use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::CryptoError;
@@ -66,6 +67,16 @@ impl fmt::Debug for VaultKey {
         f.write_str("VaultKey(***)")
     }
 }
+
+impl PartialEq for VaultKey {
+    /// Constant-time equality comparison to prevent timing side-channels
+    /// when comparing keys (e.g., during vault migration or key rotation).
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes.ct_eq(&other.bytes).into()
+    }
+}
+
+impl Eq for VaultKey {}
 
 /// A 256-bit random salt for Argon2id key derivation.
 ///
@@ -235,5 +246,19 @@ mod tests {
     fn empty_passphrase_rejected() {
         let salt = Salt::generate().unwrap();
         assert!(derive_key(b"", &salt).is_err());
+    }
+
+    #[test]
+    fn vault_key_equality_same_bytes() {
+        let key1 = VaultKey::from_bytes([0x42; KEY_LEN]);
+        let key2 = VaultKey::from_bytes([0x42; KEY_LEN]);
+        assert_eq!(key1, key2);
+    }
+
+    #[test]
+    fn vault_key_equality_different_bytes() {
+        let key1 = VaultKey::from_bytes([0x01; KEY_LEN]);
+        let key2 = VaultKey::from_bytes([0x02; KEY_LEN]);
+        assert_ne!(key1, key2);
     }
 }

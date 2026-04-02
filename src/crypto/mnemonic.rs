@@ -210,13 +210,23 @@ impl Mnemonic {
             return Err(CryptoError::InvalidMnemonic);
         }
 
+        // PROD-06: Scan ALL words before returning — don't leak which
+        // word position failed via early-return timing.
         let mut indices = [0usize; WORD_COUNT];
+        let mut all_valid: u8 = 1;
         for (i, word) in words.iter().enumerate() {
-            let idx = word_to_index(word, wl)
-                .ok_or(CryptoError::InvalidMnemonic)?;
-            if let Some(slot) = indices.get_mut(i) {
-                *slot = idx;
+            match word_to_index(word, wl) {
+                Some(idx) => {
+                    if let Some(slot) = indices.get_mut(i) {
+                        *slot = idx;
+                    }
+                }
+                None => all_valid = 0,
             }
+        }
+        if all_valid == 0 {
+            indices.zeroize();
+            return Err(CryptoError::InvalidMnemonic);
         }
 
         let (entropy, actual_checksum) = unpack_indices(&indices);

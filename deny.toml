@@ -75,8 +75,11 @@ deny = [
     { crate = "rust-crypto", reason = "Unmaintained, known vulnerabilities — use RustCrypto" },
 
     # --- Network crates that could exfiltrate data ---
-    { crate = "reqwest", wrappers = ["privacysuite-core-sdk"], reason = "HTTP must go through privacy networking tiers, not raw reqwest" },
-    { crate = "hyper", wrappers = ["privacysuite-core-sdk"], reason = "HTTP must go through privacy networking tiers" },
+    # Banned unconditionally. When the networking module is implemented,
+    # these will be used only behind the privacy tier abstraction and
+    # this ban list will be updated with explicit exceptions.
+    { crate = "reqwest", reason = "HTTP must go through privacy networking tiers, not raw reqwest" },
+    { crate = "hyper", reason = "HTTP must go through privacy networking tiers" },
 ]
 
 # =========================================================================

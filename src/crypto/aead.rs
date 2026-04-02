@@ -38,12 +38,6 @@ const MIN_CIPHERTEXT_LEN: usize = NONCE_LEN + TAG_LEN;
 ///
 /// Returns `nonce || ciphertext || tag` as a single `Vec<u8>`.
 ///
-/// # Arguments
-///
-/// * `key` — 256-bit encryption key (typically a [`VaultKey`]).
-/// * `plaintext` — Data to encrypt. May be empty.
-/// * `aad` — Associated data to authenticate but not encrypt. May be empty.
-///
 /// # Errors
 ///
 /// Returns [`CryptoError::Rng`] if nonce generation fails, or
@@ -54,14 +48,16 @@ const MIN_CIPHERTEXT_LEN: usize = NONCE_LEN + TAG_LEN;
 /// ```
 /// use privacysuite_core_sdk::crypto::keys::VaultKey;
 /// use privacysuite_core_sdk::crypto::aead::{encrypt, decrypt};
+/// use zeroize::Zeroize;
 ///
 /// let key = VaultKey::from_bytes([0x42; 32]);
 /// let ciphertext = encrypt(&key, b"hello world", b"context").unwrap();
-/// let plaintext = decrypt(&key, &ciphertext, b"context").unwrap();
+/// let mut plaintext = decrypt(&key, &ciphertext, b"context").unwrap();
 /// assert_eq!(plaintext, b"hello world");
+/// // Zeroize plaintext when done — it contains decrypted secret data.
+/// plaintext.zeroize();
 /// ```
 pub fn encrypt(key: &VaultKey, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>, CryptoError> {
-    // Generate a random 24-byte nonce.
     let mut nonce_bytes = [0u8; NONCE_LEN];
     rand::rngs::OsRng
         .try_fill_bytes(&mut nonce_bytes)
@@ -71,12 +67,10 @@ pub fn encrypt(key: &VaultKey, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>, 
         XChaCha20Poly1305::new_from_slice(key.as_bytes()).map_err(|_| CryptoError::Encryption)?;
 
     let nonce = chacha20poly1305::XNonce::from_slice(&nonce_bytes);
-
     let payload = Payload { msg: plaintext, aad };
 
     let ciphertext_and_tag = cipher.encrypt(nonce, payload).map_err(|_| CryptoError::Encryption)?;
 
-    // Prepend nonce to ciphertext.
     let mut output = Vec::with_capacity(NONCE_LEN + ciphertext_and_tag.len());
     output.extend_from_slice(&nonce_bytes);
     output.extend_from_slice(&ciphertext_and_tag);
@@ -88,11 +82,10 @@ pub fn encrypt(key: &VaultKey, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>, 
 ///
 /// Expects the input format: `nonce (24 bytes) || ciphertext || tag (16 bytes)`.
 ///
-/// # Arguments
+/// # Security
 ///
-/// * `key` — The same 256-bit key used for encryption.
-/// * `ciphertext` — The complete output from [`encrypt`].
-/// * `aad` — The same associated data used during encryption.
+/// The returned `Vec<u8>` contains decrypted plaintext. The caller **must**
+/// call `.zeroize()` on it when done to scrub the secret from heap memory.
 ///
 /// # Errors
 ///
@@ -113,11 +106,7 @@ pub fn decrypt(key: &VaultKey, ciphertext: &[u8], aad: &[u8]) -> Result<Vec<u8>,
         XChaCha20Poly1305::new_from_slice(key.as_bytes()).map_err(|_| CryptoError::Decryption)?;
 
     let nonce = chacha20poly1305::XNonce::from_slice(nonce_bytes);
-
-    let payload = Payload {
-        msg: encrypted,
-        aad,
-    };
+    let payload = Payload { msg: encrypted, aad };
 
     cipher.decrypt(nonce, payload).map_err(|_| CryptoError::Decryption)
 }
@@ -126,6 +115,7 @@ pub fn decrypt(key: &VaultKey, ciphertext: &[u8], aad: &[u8]) -> Result<Vec<u8>,
 mod tests {
     use super::*;
     use crate::crypto::keys::VaultKey;
+    use zeroize::Zeroize;
 
     fn test_key() -> VaultKey {
         VaultKey::from_bytes([0x42; 32])
@@ -138,9 +128,9 @@ mod tests {
         let aad = b"test context";
 
         let ciphertext = encrypt(&key, plaintext, aad).unwrap();
-        let recovered = decrypt(&key, &ciphertext, aad).unwrap();
-
+        let mut recovered = decrypt(&key, &ciphertext, aad).unwrap();
         assert_eq!(recovered, plaintext);
+        recovered.zeroize();
     }
 
     #[test]
@@ -155,8 +145,9 @@ mod tests {
     fn round_trip_empty_aad() {
         let key = test_key();
         let ciphertext = encrypt(&key, b"data", b"").unwrap();
-        let recovered = decrypt(&key, &ciphertext, b"").unwrap();
+        let mut recovered = decrypt(&key, &ciphertext, b"").unwrap();
         assert_eq!(recovered, b"data");
+        recovered.zeroize();
     }
 
     #[test]
@@ -165,38 +156,29 @@ mod tests {
         let key2 = VaultKey::from_bytes([0x02; 32]);
 
         let ciphertext = encrypt(&key1, b"secret", b"").unwrap();
-        let result = decrypt(&key2, &ciphertext, b"");
-
-        assert!(result.is_err());
+        assert!(decrypt(&key2, &ciphertext, b"").is_err());
     }
 
     #[test]
     fn tampered_ciphertext_fails() {
         let key = test_key();
         let mut ciphertext = encrypt(&key, b"secret", b"").unwrap();
-
-        // Flip a byte in the encrypted portion (after the nonce).
         let idx = NONCE_LEN + 1;
         ciphertext[idx] ^= 0xFF;
-
-        let result = decrypt(&key, &ciphertext, b"");
-        assert!(result.is_err());
+        assert!(decrypt(&key, &ciphertext, b"").is_err());
     }
 
     #[test]
     fn wrong_aad_fails() {
         let key = test_key();
         let ciphertext = encrypt(&key, b"secret", b"correct aad").unwrap();
-        let result = decrypt(&key, &ciphertext, b"wrong aad");
-        assert!(result.is_err());
+        assert!(decrypt(&key, &ciphertext, b"wrong aad").is_err());
     }
 
     #[test]
     fn truncated_ciphertext_fails() {
         let key = test_key();
-        let short = [0u8; NONCE_LEN + TAG_LEN - 1];
-        let result = decrypt(&key, &short, b"");
-        assert!(result.is_err());
+        assert!(decrypt(&key, &[0u8; MIN_CIPHERTEXT_LEN - 1], b"").is_err());
     }
 
     #[test]
@@ -204,8 +186,6 @@ mod tests {
         let key = test_key();
         let plaintext = b"hello";
         let ciphertext = encrypt(&key, plaintext, b"").unwrap();
-
-        // nonce (24) + plaintext len (5) + tag (16) = 45
         assert_eq!(ciphertext.len(), NONCE_LEN + plaintext.len() + TAG_LEN);
     }
 
@@ -214,13 +194,12 @@ mod tests {
         let key = test_key();
         let ct1 = encrypt(&key, b"same", b"").unwrap();
         let ct2 = encrypt(&key, b"same", b"").unwrap();
-
-        // Different random nonces → different ciphertexts.
         assert_ne!(ct1, ct2);
 
-        // But both decrypt to the same plaintext.
-        let pt1 = decrypt(&key, &ct1, b"").unwrap();
-        let pt2 = decrypt(&key, &ct2, b"").unwrap();
+        let mut pt1 = decrypt(&key, &ct1, b"").unwrap();
+        let mut pt2 = decrypt(&key, &ct2, b"").unwrap();
         assert_eq!(pt1, pt2);
+        pt1.zeroize();
+        pt2.zeroize();
     }
 }
