@@ -1,0 +1,30 @@
+# Android NDK cross-compilation targets.
+#
+# These are configured automatically by cargo-ndk when invoked, but are
+# listed here for documentation and for direct `cargo build --target` usage.
+#
+# Usage with cargo-ndk (recommended):
+#   cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 \
+#     -p 21 -o ./jniLibs \
+#     build -p privacysuite-ffi --release
+#
+# Prerequisites:
+#   1. rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+#   2. cargo install cargo-ndk
+#   3. Android NDK installed (set ANDROID_NDK_HOME if not in default location)
+
+[target.aarch64-linux-android]
+# arm64-v8a — all modern Android devices
+linker = "aarch64-linux-android21-clang"
+
+[target.armv7-linux-androideabi]
+# armeabi-v7a — legacy 32-bit ARM
+linker = "armv7a-linux-androideabi21-clang"
+
+[target.x86_64-linux-android]
+# x86_64 — emulators and some Chromebooks
+linker = "x86_64-linux-android21-clang"
+
+[target.i686-linux-android]
+# x86 — legacy emulators
+linker = "i686-linux-android21-clang"

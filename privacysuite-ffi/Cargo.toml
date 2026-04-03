@@ -1,0 +1,31 @@
+[package]
+name = "privacysuite-ffi"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "UniFFI bindings for PrivacySuite Core SDK — Android/iOS/Desktop"
+authors = ["BoomLeft LLC"]
+license = "Proprietary"
+publish = false
+
+[lib]
+crate-type = ["lib", "cdylib"]
+name = "privacysuite_ffi"
+
+[features]
+default = ["auth"]
+auth = ["privacysuite-core-sdk/auth"]
+
+[dependencies]
+privacysuite-core-sdk = { path = "..", default-features = false }
+uniffi = { version = "0.29", features = ["cli"] }
+thiserror = "2"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

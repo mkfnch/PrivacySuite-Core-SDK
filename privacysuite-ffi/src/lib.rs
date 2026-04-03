@@ -1,0 +1,370 @@
+//! UniFFI bindings for PrivacySuite Core SDK.
+//!
+//! This crate provides the FFI bridge between the pure-Rust core SDK and
+//! foreign languages (Kotlin/Android, Swift/iOS, Python). All key material
+//! is wrapped in opaque `Arc`-based handles so that **raw key bytes never
+//! cross the JNI/FFI boundary** unless the caller explicitly requests them.
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────┐
+//! │  privacysuite-core-sdk          │  ← #![forbid(unsafe_code)]
+//! │  (all crypto, storage, sync)    │     Zero unsafe, fully auditable
+//! └──────────────┬──────────────────┘
+//! │  privacysuite-ffi (this crate)  │  ← UniFFI scaffolding
+//! │  Opaque handles, type mapping   │     Thin glue layer
+//! └──────────────┬──────────────────┘
+//! │  Generated Kotlin / Swift       │  ← Idiomatic foreign API
+//! └─────────────────────────────────┘
+//! ```
+
+use std::sync::Arc;
+
+use privacysuite_core_sdk::crypto::{aead, keys, mnemonic};
+use privacysuite_core_sdk::error::CryptoError;
+
+uniffi::setup_scaffolding!();
+
+// ---------------------------------------------------------------------------
+// Error mapping
+// ---------------------------------------------------------------------------
+
+/// FFI-safe error type that maps all SDK errors to flat enum variants.
+///
+/// UniFFI maps this to Kotlin sealed classes / Swift enums / Python exceptions.
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum PrivacySuiteError {
+    /// Key derivation failed (bad parameters or empty passphrase).
+    #[error("key derivation failed")]
+    KeyDerivation,
+    /// AEAD encryption failed.
+    #[error("encryption failed")]
+    Encryption,
+    /// AEAD decryption or authentication failed.
+    #[error("decryption failed")]
+    Decryption,
+    /// OS entropy source unavailable.
+    #[error("random number generation failed")]
+    Rng,
+    /// Invalid BIP39 mnemonic phrase.
+    #[error("invalid mnemonic phrase")]
+    InvalidMnemonic,
+    /// Input has wrong length.
+    #[error("invalid input length")]
+    InvalidLength,
+    /// Base64 decoding failed.
+    #[error("base64 decoding failed")]
+    Base64Decode,
+    /// Ed25519 signature verification failed.
+    #[error("signature verification failed")]
+    SignatureInvalid,
+    /// OPAQUE protocol state machine error.
+    #[error("OPAQUE protocol error")]
+    AuthProtocol,
+    /// Invalid OPAQUE wire message.
+    #[error("invalid OPAQUE message")]
+    AuthInvalidMessage,
+}
+
+impl From<CryptoError> for PrivacySuiteError {
+    fn from(e: CryptoError) -> Self {
+        match e {
+            CryptoError::KeyDerivation => Self::KeyDerivation,
+            CryptoError::Encryption => Self::Encryption,
+            CryptoError::Decryption => Self::Decryption,
+            CryptoError::Rng => Self::Rng,
+            CryptoError::InvalidMnemonic => Self::InvalidMnemonic,
+            CryptoError::InvalidLength { .. } => Self::InvalidLength,
+            CryptoError::Base64Decode => Self::Base64Decode,
+            CryptoError::SignatureInvalid => Self::SignatureInvalid,
+        }
+    }
+}
+
+#[cfg(feature = "auth")]
+impl From<privacysuite_core_sdk::auth::AuthError> for PrivacySuiteError {
+    fn from(e: privacysuite_core_sdk::auth::AuthError) -> Self {
+        match e {
+            privacysuite_core_sdk::auth::AuthError::Protocol => Self::AuthProtocol,
+            privacysuite_core_sdk::auth::AuthError::InvalidMessage => Self::AuthInvalidMessage,
+            privacysuite_core_sdk::auth::AuthError::Crypto(c) => Self::from(c),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Opaque key handles — raw key bytes NEVER cross FFI unless explicitly asked.
+// ---------------------------------------------------------------------------
+
+/// Opaque handle wrapping a VaultKey (256-bit encryption key).
+///
+/// Key material lives only on the Rust heap and is zeroized when the last
+/// `Arc` reference is dropped (via VaultKey's ZeroizeOnDrop). Kotlin/Swift
+/// callers hold a pointer to this Arc — they never touch raw bytes unless
+/// they call `as_bytes()`.
+#[derive(uniffi::Object)]
+pub struct VaultKeyHandle {
+    inner: keys::VaultKey,
+}
+
+#[uniffi::export]
+impl VaultKeyHandle {
+    /// Create a VaultKeyHandle from raw bytes (32 bytes required).
+    #[uniffi::constructor]
+    pub fn from_bytes(bytes: Vec<u8>) -> Arc<Self> {
+        let mut arr = [0u8; keys::KEY_LEN];
+        let len = bytes.len().min(keys::KEY_LEN);
+        arr[..len].copy_from_slice(&bytes[..len]);
+        Arc::new(Self {
+            inner: keys::VaultKey::from_bytes(arr),
+        })
+    }
+
+    /// Export the raw key bytes. Caller must zeroize when done.
+    pub fn as_bytes(&self) -> Vec<u8> {
+        self.inner.as_bytes().to_vec()
+    }
+}
+
+/// Opaque handle wrapping a 256-bit random salt.
+#[derive(uniffi::Object)]
+pub struct SaltHandle {
+    inner: keys::Salt,
+}
+
+#[uniffi::export]
+impl SaltHandle {
+    /// Generate a fresh cryptographically random salt.
+    #[uniffi::constructor]
+    pub fn generate() -> Result<Arc<Self>, PrivacySuiteError> {
+        Ok(Arc::new(Self {
+            inner: keys::Salt::generate()?,
+        }))
+    }
+
+    /// Create a SaltHandle from existing bytes (32 bytes required).
+    #[uniffi::constructor]
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Arc<Self>, PrivacySuiteError> {
+        Ok(Arc::new(Self {
+            inner: keys::Salt::from_slice(&bytes)?,
+        }))
+    }
+
+    /// Export the raw salt bytes.
+    pub fn as_bytes(&self) -> Vec<u8> {
+        self.inner.as_bytes().to_vec()
+    }
+}
+
+/// Opaque handle wrapping a 24-word BIP39 mnemonic.
+#[derive(uniffi::Object)]
+pub struct MnemonicHandle {
+    inner: mnemonic::Mnemonic,
+}
+
+#[uniffi::export]
+impl MnemonicHandle {
+    /// Generate a new random 24-word mnemonic.
+    #[uniffi::constructor]
+    pub fn generate() -> Result<Arc<Self>, PrivacySuiteError> {
+        Ok(Arc::new(Self {
+            inner: mnemonic::Mnemonic::generate()?,
+        }))
+    }
+
+    /// Recover a mnemonic from a space-separated word phrase.
+    #[uniffi::constructor]
+    pub fn from_phrase(phrase: String) -> Result<Arc<Self>, PrivacySuiteError> {
+        Ok(Arc::new(Self {
+            inner: mnemonic::Mnemonic::from_phrase(&phrase)?,
+        }))
+    }
+
+    /// Returns the 24 mnemonic words.
+    pub fn words(&self) -> Vec<String> {
+        self.inner.words()
+    }
+
+    /// Returns the mnemonic as a space-separated string.
+    pub fn to_phrase(&self) -> String {
+        self.inner.to_phrase()
+    }
+
+    /// Derives a VaultKey from this mnemonic via BIP39 seed derivation.
+    pub fn derive_vault_key(&self, passphrase: String) -> Result<Arc<VaultKeyHandle>, PrivacySuiteError> {
+        let key = self.inner.derive_vault_key(&passphrase)?;
+        Ok(Arc::new(VaultKeyHandle { inner: key }))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Core crypto functions
+// ---------------------------------------------------------------------------
+
+/// Derives a VaultKey from a passphrase and salt using Argon2id.
+///
+/// Parameters are hardcoded: m=64 MB, t=3, p=4 (no downgrade possible).
+#[uniffi::export]
+pub fn derive_key(
+    passphrase: Vec<u8>,
+    salt: &SaltHandle,
+) -> Result<Arc<VaultKeyHandle>, PrivacySuiteError> {
+    let key = keys::derive_key(&passphrase, &salt.inner)?;
+    Ok(Arc::new(VaultKeyHandle { inner: key }))
+}
+
+/// Encrypts plaintext using XChaCha20-Poly1305 with associated data.
+///
+/// Returns nonce || ciphertext || tag as a single byte array.
+#[uniffi::export]
+pub fn aead_encrypt(
+    key: &VaultKeyHandle,
+    plaintext: Vec<u8>,
+    aad: Vec<u8>,
+) -> Result<Vec<u8>, PrivacySuiteError> {
+    Ok(aead::encrypt(&key.inner, &plaintext, &aad)?)
+}
+
+/// Decrypts ciphertext produced by `aead_encrypt`.
+///
+/// Expects input format: nonce (24 bytes) || ciphertext || tag (16 bytes).
+#[uniffi::export]
+pub fn aead_decrypt(
+    key: &VaultKeyHandle,
+    ciphertext: Vec<u8>,
+    aad: Vec<u8>,
+) -> Result<Vec<u8>, PrivacySuiteError> {
+    Ok(aead::decrypt(&key.inner, &ciphertext, &aad)?)
+}
+
+// ---------------------------------------------------------------------------
+// OPAQUE authentication (client-side)
+// ---------------------------------------------------------------------------
+
+/// Result of starting OPAQUE registration.
+#[derive(uniffi::Record)]
+pub struct RegistrationStartResult {
+    /// Opaque state handle — pass to `registration_finish`.
+    pub state: Arc<RegistrationStateHandle>,
+    /// Serialized RegistrationRequest to send to the server.
+    pub message: Vec<u8>,
+}
+
+/// Result of starting OPAQUE login.
+#[derive(uniffi::Record)]
+pub struct LoginStartResult {
+    /// Opaque state handle — pass to `login_finish`.
+    pub state: Arc<LoginStateHandle>,
+    /// Serialized CredentialRequest to send to the server.
+    pub message: Vec<u8>,
+}
+
+/// Opaque handle for OPAQUE client registration state.
+///
+/// This is a one-shot handle: `registration_finish` consumes the inner state.
+#[derive(uniffi::Object)]
+pub struct RegistrationStateHandle {
+    #[cfg(feature = "auth")]
+    inner: std::sync::Mutex<Option<privacysuite_core_sdk::auth::ClientRegistrationState>>,
+    #[cfg(not(feature = "auth"))]
+    _phantom: (),
+}
+
+/// Opaque handle for OPAQUE client login state.
+///
+/// This is a one-shot handle: `login_finish` consumes the inner state.
+#[derive(uniffi::Object)]
+pub struct LoginStateHandle {
+    #[cfg(feature = "auth")]
+    inner: std::sync::Mutex<Option<privacysuite_core_sdk::auth::ClientLoginState>>,
+    #[cfg(not(feature = "auth"))]
+    _phantom: (),
+}
+
+/// Begin OPAQUE registration. Returns state + message to send to server.
+#[uniffi::export]
+pub fn registration_start(password: Vec<u8>) -> Result<RegistrationStartResult, PrivacySuiteError> {
+    #[cfg(feature = "auth")]
+    {
+        let (state, message) = privacysuite_core_sdk::auth::registration_start(&password)?;
+        Ok(RegistrationStartResult {
+            state: Arc::new(RegistrationStateHandle {
+                inner: std::sync::Mutex::new(Some(state)),
+            }),
+            message,
+        })
+    }
+    #[cfg(not(feature = "auth"))]
+    {
+        let _ = password;
+        Err(PrivacySuiteError::AuthProtocol)
+    }
+}
+
+/// Finish OPAQUE registration. Returns upload message to send to server.
+#[uniffi::export]
+pub fn registration_finish(
+    state: &RegistrationStateHandle,
+    server_response: Vec<u8>,
+) -> Result<Vec<u8>, PrivacySuiteError> {
+    #[cfg(feature = "auth")]
+    {
+        let inner = state
+            .inner
+            .lock()
+            .map_err(|_| PrivacySuiteError::AuthProtocol)?
+            .take()
+            .ok_or(PrivacySuiteError::AuthProtocol)?;
+        Ok(privacysuite_core_sdk::auth::registration_finish(inner, &server_response)?)
+    }
+    #[cfg(not(feature = "auth"))]
+    {
+        let _ = (state, server_response);
+        Err(PrivacySuiteError::AuthProtocol)
+    }
+}
+
+/// Begin OPAQUE login. Returns state + message to send to server.
+#[uniffi::export]
+pub fn login_start(password: Vec<u8>) -> Result<LoginStartResult, PrivacySuiteError> {
+    #[cfg(feature = "auth")]
+    {
+        let (state, message) = privacysuite_core_sdk::auth::login_start(&password)?;
+        Ok(LoginStartResult {
+            state: Arc::new(LoginStateHandle {
+                inner: std::sync::Mutex::new(Some(state)),
+            }),
+            message,
+        })
+    }
+    #[cfg(not(feature = "auth"))]
+    {
+        let _ = password;
+        Err(PrivacySuiteError::AuthProtocol)
+    }
+}
+
+/// Finish OPAQUE login. Returns the authenticated session key bytes.
+#[uniffi::export]
+pub fn login_finish(
+    state: &LoginStateHandle,
+    server_response: Vec<u8>,
+) -> Result<Vec<u8>, PrivacySuiteError> {
+    #[cfg(feature = "auth")]
+    {
+        let inner = state
+            .inner
+            .lock()
+            .map_err(|_| PrivacySuiteError::AuthProtocol)?
+            .take()
+            .ok_or(PrivacySuiteError::AuthProtocol)?;
+        let session_key = privacysuite_core_sdk::auth::login_finish(inner, &server_response)?;
+        Ok(session_key.as_bytes().to_vec())
+    }
+    #[cfg(not(feature = "auth"))]
+    {
+        let _ = (state, server_response);
+        Err(PrivacySuiteError::AuthProtocol)
+    }
+}
