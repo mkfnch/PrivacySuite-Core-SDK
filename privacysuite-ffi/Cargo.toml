@@ -18,12 +18,8 @@ auth = ["privacysuite-core-sdk/auth"]
 
 [dependencies]
 privacysuite-core-sdk = { path = "..", default-features = false }
-uniffi = { version = "0.29", features = ["cli"] }
+uniffi = { version = "0.31", default-features = false }
 thiserror = "2"
-
-[[bin]]
-name = "uniffi-bindgen"
-path = "uniffi-bindgen.rs"
 
 [lints.clippy]
 unwrap_used = "deny"
