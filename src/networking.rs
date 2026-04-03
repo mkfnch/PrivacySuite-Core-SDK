@@ -21,7 +21,6 @@
 //! ~1,400 transitive crates including unmaintained packages), keeping the
 //! supply chain auditable and free of security advisories.
 
-use std::collections::HashSet;
 use std::fmt;
 use std::net::IpAddr;
 
@@ -244,39 +243,9 @@ impl Default for TorClient {
     }
 }
 
-/// A set of SHA-256 certificate pins for TLS certificate pinning.
-///
-/// Certificate pinning defends against compromised or coerced certificate
-/// authorities by restricting which certificates the client will accept
-/// for a given host.
-#[derive(Debug, Clone)]
-pub struct CertificatePinner {
-    pins: HashSet<[u8; 32]>,
-}
-
-impl CertificatePinner {
-    /// Create a pinner from a list of SHA-256 certificate hashes.
-    #[must_use]
-    pub fn new(pins: Vec<[u8; 32]>) -> Self {
-        Self {
-            pins: pins.into_iter().collect(),
-        }
-    }
-
-    /// Returns `true` if `cert_hash` matches one of the pinned certificates.
-    ///
-    /// Uses constant-time comparison against every pin to prevent
-    /// timing side-channels that could reveal which pins are configured.
-    #[must_use]
-    pub fn verify(&self, cert_hash: &[u8; 32]) -> bool {
-        use subtle::ConstantTimeEq;
-        let mut found: u8 = 0;
-        for pin in &self.pins {
-            found |= pin.ct_eq(cert_hash).unwrap_u8();
-        }
-        found == 1
-    }
-}
+/// Re-exported from [`crate::crypto::pinning`] — available without the
+/// `networking` feature via `privacysuite_core_sdk::crypto::pinning::CertificatePinner`.
+pub use crate::crypto::pinning::CertificatePinner;
 
 #[cfg(test)]
 mod tests {

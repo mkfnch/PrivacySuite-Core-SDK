@@ -21,7 +21,7 @@
 
 use std::sync::Arc;
 
-use privacysuite_core_sdk::crypto::{aead, keys, mnemonic};
+use privacysuite_core_sdk::crypto::{aead, hash, kdf, keys, mnemonic};
 use privacysuite_core_sdk::error::CryptoError;
 
 uniffi::setup_scaffolding!();
@@ -212,6 +212,52 @@ pub fn derive_key(
 ) -> Result<Arc<VaultKeyHandle>, PrivacySuiteError> {
     let key = keys::derive_key(&passphrase, &salt.inner)?;
     Ok(Arc::new(VaultKeyHandle { inner: key }))
+}
+
+/// Derives a purpose-specific sub-key from a master key using BLAKE3.
+///
+/// The `context` string binds the derived key to a specific purpose.
+/// Different contexts produce independent keys from the same master.
+#[uniffi::export]
+pub fn derive_subkey(
+    master: &VaultKeyHandle,
+    context: String,
+) -> Result<Arc<VaultKeyHandle>, PrivacySuiteError> {
+    let key = kdf::derive_subkey(&master.inner, &context)?;
+    Ok(Arc::new(VaultKeyHandle { inner: key }))
+}
+
+/// Derives a VaultKey using Argon2id with custom parameters.
+///
+/// Parameters are validated: m >= 64 MiB, t >= 3, p in 1..=8.
+#[uniffi::export]
+pub fn derive_key_with_params(
+    passphrase: Vec<u8>,
+    salt: &SaltHandle,
+    m_cost_mib: u32,
+    t_cost: u32,
+    p_cost: u32,
+) -> Result<Arc<VaultKeyHandle>, PrivacySuiteError> {
+    let params = keys::KdfParams::new(m_cost_mib, t_cost, p_cost)?;
+    let key = keys::derive_key_with_params(&passphrase, &salt.inner, &params)?;
+    Ok(Arc::new(VaultKeyHandle { inner: key }))
+}
+
+/// Computes a BLAKE3 hash of `data`, returning a 32-byte digest.
+#[uniffi::export]
+pub fn blake3_hash(data: Vec<u8>) -> Vec<u8> {
+    hash::blake3(&data).to_vec()
+}
+
+/// Returns `true` if `data` hashes to the given BLAKE3 digest.
+#[uniffi::export]
+pub fn blake3_verify(data: Vec<u8>, expected: Vec<u8>) -> bool {
+    if expected.len() != hash::BLAKE3_HASH_LEN {
+        return false;
+    }
+    let mut arr = [0u8; hash::BLAKE3_HASH_LEN];
+    arr.copy_from_slice(&expected);
+    hash::blake3_verify(&data, &arr)
 }
 
 /// Encrypts plaintext using XChaCha20-Poly1305 with associated data.
