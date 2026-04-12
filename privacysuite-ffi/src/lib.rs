@@ -21,7 +21,7 @@
 
 use std::sync::Arc;
 
-use privacysuite_core_sdk::crypto::{aead, hash, kdf, keys, mnemonic};
+use privacysuite_core_sdk::crypto::{aead, hash, hkdf, kdf, keys, mnemonic, util};
 use privacysuite_core_sdk::error::CryptoError;
 
 uniffi::setup_scaffolding!();
@@ -282,6 +282,71 @@ pub fn aead_decrypt(
     aad: Vec<u8>,
 ) -> Result<Vec<u8>, PrivacySuiteError> {
     Ok(aead::decrypt(&key.inner, &ciphertext, &aad)?)
+}
+
+// ---------------------------------------------------------------------------
+// Additional crypto utilities
+// ---------------------------------------------------------------------------
+
+/// Computes a keyed BLAKE3 MAC of `data`, returning a 32-byte digest.
+///
+/// The key must be exactly 32 bytes.
+#[uniffi::export]
+pub fn blake3_keyed_hash(key: Vec<u8>, data: Vec<u8>) -> Result<Vec<u8>, PrivacySuiteError> {
+    if key.len() != hash::BLAKE3_HASH_LEN {
+        return Err(PrivacySuiteError::InvalidLength);
+    }
+    let mut key_arr = [0u8; hash::BLAKE3_HASH_LEN];
+    key_arr.copy_from_slice(&key);
+    Ok(hash::blake3_keyed(&key_arr, &data).to_vec())
+}
+
+/// Verifies a keyed BLAKE3 MAC.
+#[uniffi::export]
+pub fn blake3_keyed_verify(key: Vec<u8>, data: Vec<u8>, expected: Vec<u8>) -> Result<bool, PrivacySuiteError> {
+    if key.len() != hash::BLAKE3_HASH_LEN || expected.len() != hash::BLAKE3_HASH_LEN {
+        return Err(PrivacySuiteError::InvalidLength);
+    }
+    let mut key_arr = [0u8; hash::BLAKE3_HASH_LEN];
+    key_arr.copy_from_slice(&key);
+    let mut exp_arr = [0u8; hash::BLAKE3_HASH_LEN];
+    exp_arr.copy_from_slice(&expected);
+    Ok(hash::blake3_keyed_verify(&key_arr, &data, &exp_arr))
+}
+
+/// HKDF-SHA256 Expand (RFC 5869 Section 2.3).
+///
+/// Expands a pseudorandom key into `output_len` bytes bound to `info`.
+/// PRK must be at least 32 bytes. Max output: 8160 bytes.
+#[uniffi::export]
+pub fn hkdf_sha256_expand(
+    prk: Vec<u8>,
+    info: Vec<u8>,
+    output_len: u32,
+) -> Result<Vec<u8>, PrivacySuiteError> {
+    Ok(hkdf::hkdf_expand(&prk, &info, output_len as usize)?)
+}
+
+/// HKDF-SHA256 Extract (RFC 5869 Section 2.2).
+///
+/// Extracts a 32-byte pseudorandom key from input key material.
+#[uniffi::export]
+pub fn hkdf_sha256_extract(salt: Vec<u8>, ikm: Vec<u8>) -> Vec<u8> {
+    hkdf::hkdf_extract(&salt, &ikm).to_vec()
+}
+
+/// Generates cryptographically secure random bytes.
+#[uniffi::export]
+pub fn secure_random(len: u32) -> Result<Vec<u8>, PrivacySuiteError> {
+    Ok(util::secure_random(len as usize)?)
+}
+
+/// Constant-time comparison of two byte slices.
+///
+/// Returns `true` only if both slices have identical length and contents.
+#[uniffi::export]
+pub fn constant_time_equals(a: Vec<u8>, b: Vec<u8>) -> bool {
+    util::constant_time_eq(&a, &b)
 }
 
 // ---------------------------------------------------------------------------

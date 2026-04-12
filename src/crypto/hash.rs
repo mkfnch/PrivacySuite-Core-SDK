@@ -34,6 +34,27 @@ pub fn blake3_verify(data: &[u8], expected: &[u8; BLAKE3_HASH_LEN]) -> bool {
     actual.as_bytes().ct_eq(expected).into()
 }
 
+/// Computes a keyed BLAKE3 MAC of `data`, returning a 32-byte digest.
+///
+/// The key must be exactly 32 bytes. This is suitable for blind indexes
+/// and deterministic MACs where the key is secret.
+#[must_use]
+pub fn blake3_keyed(key: &[u8; BLAKE3_HASH_LEN], data: &[u8]) -> [u8; BLAKE3_HASH_LEN] {
+    *blake3::keyed_hash(key, data).as_bytes()
+}
+
+/// Returns `true` if the keyed BLAKE3 MAC of `data` matches `expected`.
+#[must_use]
+pub fn blake3_keyed_verify(
+    key: &[u8; BLAKE3_HASH_LEN],
+    data: &[u8],
+    expected: &[u8; BLAKE3_HASH_LEN],
+) -> bool {
+    use subtle::ConstantTimeEq;
+    let actual = blake3::keyed_hash(key, data);
+    actual.as_bytes().ct_eq(expected).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +111,41 @@ mod tests {
         let data = vec![0xABu8; 1_000_000];
         let digest = blake3(&data);
         assert!(blake3_verify(&data, &digest));
+    }
+
+    #[test]
+    fn keyed_hash_produces_32_bytes() {
+        let key = [0x42u8; BLAKE3_HASH_LEN];
+        let digest = blake3_keyed(&key, b"hello");
+        assert_eq!(digest.len(), BLAKE3_HASH_LEN);
+    }
+
+    #[test]
+    fn keyed_hash_differs_from_unkeyed() {
+        let key = [0x42u8; BLAKE3_HASH_LEN];
+        let keyed = blake3_keyed(&key, b"hello");
+        let unkeyed = blake3(b"hello");
+        assert_ne!(keyed, unkeyed);
+    }
+
+    #[test]
+    fn different_keys_produce_different_macs() {
+        let k1 = [0x01u8; BLAKE3_HASH_LEN];
+        let k2 = [0x02u8; BLAKE3_HASH_LEN];
+        assert_ne!(blake3_keyed(&k1, b"same"), blake3_keyed(&k2, b"same"));
+    }
+
+    #[test]
+    fn keyed_verify_correct() {
+        let key = [0x42u8; BLAKE3_HASH_LEN];
+        let mac = blake3_keyed(&key, b"verify me");
+        assert!(blake3_keyed_verify(&key, b"verify me", &mac));
+    }
+
+    #[test]
+    fn keyed_verify_rejects_wrong_data() {
+        let key = [0x42u8; BLAKE3_HASH_LEN];
+        let mac = blake3_keyed(&key, b"original");
+        assert!(!blake3_keyed_verify(&key, b"tampered", &mac));
     }
 }

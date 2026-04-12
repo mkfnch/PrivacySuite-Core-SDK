@@ -33,8 +33,10 @@
 
 pub mod aead;
 pub mod hash;
+pub mod hkdf;
 pub mod kdf;
 pub mod keys;
 pub mod mnemonic;
 pub mod pairing;
 pub mod pinning;
+pub mod util;
