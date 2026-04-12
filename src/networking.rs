@@ -146,7 +146,7 @@ impl PrivacyDns {
     }
 }
 
-/// Oblivious HTTP (OHTTP) relay — **Tier 2 privacy**.
+/// Oblivious HTTP (OHTTP) client — **Tier 2 privacy** via K-anonymous relay.
 ///
 /// OHTTP ([RFC 9458](https://www.rfc-editor.org/rfc/rfc9458)) separates
 /// knowledge of the client's IP address from knowledge of the request
@@ -157,29 +157,76 @@ impl PrivacyDns {
 /// 2. **Gateway** — decrypts the capsule and forwards the inner HTTP
 ///    request to the target, but never learns the client IP.
 ///
-/// # Status
-///
-/// No production-quality OHTTP crate exists in the Rust ecosystem yet.
-/// This struct is a forward-looking placeholder; calling its methods will
-/// return [`NetworkError::InvalidConfiguration`].
-#[derive(Debug)]
-pub struct ObliviousRelay {}
+/// This implementation uses X25519 for ephemeral key exchange and
+/// XChaCha20-Poly1305 for authenticated encryption. The Gateway's
+/// X25519 public key must be provisioned out-of-band.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OhttpConfig {
+    /// URL of the Relay server (e.g. `"https://relay.boomleft.com/ohttp"`).
+    pub relay_url: String,
+    /// URL of the Gateway server (e.g. `"https://gateway.boomleft.com/ohttp"`).
+    pub gateway_url: String,
+    /// The Gateway's X25519 public key, base64-encoded (32 bytes).
+    pub gateway_public_key_b64: String,
+}
 
-impl ObliviousRelay {
-    /// Send `body` to `target_url` through the OHTTP relay/gateway pair.
+impl OhttpConfig {
+    /// Returns true if all three configuration fields are non-empty.
+    pub fn is_configured(&self) -> bool {
+        !self.relay_url.is_empty()
+            && !self.gateway_url.is_empty()
+            && !self.gateway_public_key_b64.is_empty()
+    }
+
+    /// Decode the Gateway's X25519 public key from base64.
     ///
     /// # Errors
     ///
-    /// Currently always returns [`NetworkError::InvalidConfiguration`]
-    /// because OHTTP support is not yet implemented.
-    pub fn relay_request(
+    /// Returns [`NetworkError::InvalidConfiguration`] if the key is not
+    /// valid base64 or not exactly 32 bytes.
+    pub fn gateway_public_key(
         &self,
-        _target_url: &str,
-        _body: &[u8],
-    ) -> Result<Vec<u8>, NetworkError> {
-        Err(NetworkError::InvalidConfiguration(
-            "OHTTP not yet implemented".into(),
-        ))
+    ) -> Result<x25519_dalek::PublicKey, NetworkError> {
+        use base64::Engine;
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&self.gateway_public_key_b64)
+            .map_err(|e| NetworkError::InvalidConfiguration(
+                format!("invalid base64 in gateway public key: {}", e)
+            ))?;
+
+        if bytes.len() != 32 {
+            return Err(NetworkError::InvalidConfiguration(
+                format!("gateway public key must be 32 bytes, got {}", bytes.len())
+            ));
+        }
+
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        Ok(x25519_dalek::PublicKey::from(arr))
+    }
+}
+
+/// The response payload after decryption from OHTTP Gateway.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct OhttpResponsePayload {
+    /// HTTP status code from the target server.
+    pub status: u16,
+    /// Response headers.
+    pub headers: Vec<(String, String)>,
+    /// Response body (base64-encoded to survive JSON serialisation).
+    pub body_b64: String,
+}
+
+impl OhttpResponsePayload {
+    /// Decode the base64-encoded response body.
+    pub fn decode_body(&self) -> Result<Vec<u8>, NetworkError> {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(&self.body_b64)
+            .map_err(|e| NetworkError::InvalidConfiguration(
+                format!("invalid base64 in response body: {}", e)
+            ))
     }
 }
 
@@ -315,13 +362,34 @@ mod tests {
     }
 
     #[test]
-    fn oblivious_relay_returns_not_implemented() {
-        let relay = ObliviousRelay {};
-        let result = relay.relay_request("https://example.com", b"body");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("OHTTP not yet implemented"));
+    fn ohttp_config_is_configured() {
+        let empty = OhttpConfig {
+            relay_url: String::new(),
+            gateway_url: String::new(),
+            gateway_public_key_b64: String::new(),
+        };
+        assert!(!empty.is_configured());
+
+        let full = OhttpConfig {
+            relay_url: "https://relay.example.com".to_string(),
+            gateway_url: "https://gw.example.com".to_string(),
+            gateway_public_key_b64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string(),
+        };
+        assert!(full.is_configured());
+    }
+
+    #[test]
+    fn ohttp_response_payload_decode_body() {
+        use base64::Engine;
+        let plain = b"hello, OHTTP!";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(plain);
+        let payload = OhttpResponsePayload {
+            status: 200,
+            headers: vec![],
+            body_b64: encoded,
+        };
+        let decoded = payload.decode_body().unwrap();
+        assert_eq!(decoded, plain);
     }
 
     #[test]

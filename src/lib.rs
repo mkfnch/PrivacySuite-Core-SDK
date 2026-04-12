@@ -37,6 +37,7 @@ pub mod crypto;
 pub mod error;
 #[cfg(feature = "networking")]
 pub mod networking;
+pub mod privacy_utils;
 #[cfg(feature = "storage")]
 pub mod storage;
 #[cfg(feature = "sync")]
