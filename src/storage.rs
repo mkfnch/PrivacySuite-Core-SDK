@@ -36,6 +36,13 @@ impl fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
+/// Prefix of the SQLCipher keying PRAGMA. Kept at module scope so the string
+/// literal lives in `.rodata` and does not cause a Vec reallocation when
+/// appended to a pre-sized buffer in [`apply_key`].
+const PRAGMA_PREFIX: &str = "PRAGMA key = \"x'";
+/// Suffix of the SQLCipher keying PRAGMA. See [`PRAGMA_PREFIX`].
+const PRAGMA_SUFFIX: &str = "'\";";
+
 impl From<rusqlite::Error> for StorageError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Database(err.to_string())
@@ -82,8 +89,6 @@ fn apply_key(conn: &Connection, key: &VaultKey) -> Result<(), StorageError> {
     //   "PRAGMA key = \"x'"     = 16 bytes
     //   hex-encoded KEY_LEN key = KEY_LEN * 2 bytes
     //   "'\";"                  = 3 bytes
-    const PRAGMA_PREFIX: &str = "PRAGMA key = \"x'";
-    const PRAGMA_SUFFIX: &str = "'\";";
     let required_capacity =
         PRAGMA_PREFIX.len() + (key.as_bytes().len() * 2) + PRAGMA_SUFFIX.len();
 

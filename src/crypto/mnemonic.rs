@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
-use rand::RngCore;
+use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256, Sha512};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -199,7 +199,7 @@ impl Mnemonic {
     pub fn generate() -> Result<Self, CryptoError> {
         let _wl = wordlist()?;
         let mut entropy = [0u8; ENTROPY_BYTES];
-        rand::rngs::OsRng
+        OsRng
             .try_fill_bytes(&mut entropy)
             .map_err(|_| CryptoError::Rng)?;
         Ok(Self { entropy })

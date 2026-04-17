@@ -25,7 +25,30 @@ vulnerability = "deny"
 unmaintained = "warn"
 yanked = "deny"
 notice = "warn"
-ignore = []
+ignore = [
+    # RUSTSEC-2026-0097 — `rand` ThreadRng unsoundness with custom logger.
+    #
+    # Applicability analysis:
+    #   1. The advisory only fires when *all* of these hold together:
+    #        a) the `log` + `thread_rng` features of `rand` are enabled, AND
+    #        b) the application installs a custom `log::Logger`, AND
+    #        c) that logger calls `rand::rng()` / `rand::thread_rng()` and
+    #           invokes RngCore methods on the resulting `ThreadRng`.
+    #   2. The SDK dropped its direct `rand` dep entirely in favour of
+    #      `rand_core` + `getrandom`, and uses only `OsRng` — never
+    #      `thread_rng`. Condition (a) is not met for first-party code.
+    #   3. The remaining `rand 0.8.5` entry in Cargo.lock is pulled in
+    #      transitively by `opaque-ke 3.0` (no stable 4.x exists at the
+    #      time of audit). opaque-ke also routes all randomness through
+    #      caller-provided OsRng (see `ClientLogin::start(&mut rng, ...)`),
+    #      never `thread_rng`. Condition (a) is not met for opaque-ke.
+    #   4. The SDK's `deny.toml` has an explicit ban on telemetry /
+    #      logging crates (sentry, datadog, bugsnag, rollbar, etc.), so
+    #      condition (b) cannot arise through our supply chain either.
+    #
+    # Revisit when opaque-ke 4.x ships stable and transitions to rand 0.9.3+.
+    "RUSTSEC-2026-0097",
+]
 
 # =========================================================================
 # Licenses — only allow licenses compatible with proprietary + privacy use

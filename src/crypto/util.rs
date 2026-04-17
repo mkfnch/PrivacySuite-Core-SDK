@@ -13,9 +13,9 @@ use crate::error::CryptoError;
 ///
 /// Returns [`CryptoError::Rng`] if the OS entropy source is unavailable.
 pub fn secure_random(len: usize) -> Result<Vec<u8>, CryptoError> {
-    use rand::RngCore;
+    use rand_core::{OsRng, RngCore};
     let mut buf = vec![0u8; len];
-    rand::rngs::OsRng
+    OsRng
         .try_fill_bytes(&mut buf)
         .map_err(|_| CryptoError::Rng)?;
     Ok(buf)

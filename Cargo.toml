@@ -26,18 +26,36 @@ full = ["auth", "storage", "sync", "networking"]
 # SECURITY: All crypto dependencies pinned to exact versions to prevent supply chain attacks.
 argon2 = "=0.5"
 chacha20poly1305 = "=0.10"
-zeroize = "=1.7"
-rand = "=0.8"
+# SECURITY: zeroize aligned with opaque-ke 3.0's ^1.8 constraint; 1.8.2
+# is the most recent stable at audit time and is reproducibly pinned.
+zeroize = "=1.8.2"
+# SECURITY: We rely only on OsRng for OS randomness — never thread_rng /
+# rand::rng. That lets us depend on the minimal rand_core + getrandom
+# stack instead of the full rand crate (which ships RUSTSEC-2026-0097
+# ThreadRng unsoundness in <0.9.3 / 0.10.0). This also shrinks the
+# supply-chain footprint by removing rand_chacha and ppv-lite86.
+rand_core = { version = "=0.6", features = ["getrandom"] }
+getrandom = "=0.2"
 sha2 = "=0.10"
 hmac = "=0.12"
 pbkdf2 = "=0.12"
 subtle = "=2"
 
 # --- Device pairing + signing (always available) ---
-x25519-dalek = "=2"
-ed25519-dalek = "=2"
+# SECURITY: static_secrets is required for long-lived pairing keys; zeroize
+# is enabled by default and provides ZeroizeOnDrop on StaticSecret.
+x25519-dalek = { version = "=2", features = ["static_secrets"] }
+# SECURITY: rand_core is required for SigningKey::generate; zeroize is
+# enabled by default and provides ZeroizeOnDrop on SigningKey.
+ed25519-dalek = { version = "=2", features = ["rand_core"] }
 blake3 = "=1"
 base64 = "=0.22"
+
+# --- URL parsing for tracking-param stripping (always available) ---
+# Used by privacy_utils to strip tracking parameters from URLs. default-features
+# are disabled to avoid pulling in the `idna` unicode tables where unnecessary,
+# reducing the supply-chain footprint.
+url = "=2"
 
 # --- Encrypted storage (optional: "storage" feature) ---
 rusqlite = { version = "=0.36", features = ["bundled-sqlcipher"], optional = true }

@@ -23,7 +23,7 @@ use opaque_ke::{
     ClientLogin, ClientLoginFinishParameters, ClientRegistration,
     ClientRegistrationFinishParameters, CipherSuite,
 };
-use rand::rngs::OsRng;
+use rand_core::OsRng;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::CryptoError;
@@ -256,7 +256,7 @@ mod tests {
     use opaque_ke::{
         ServerLogin, ServerLoginStartParameters, ServerRegistration, ServerSetup,
     };
-    use rand::rngs::OsRng;
+    use rand_core::OsRng;
 
     /// Identifier used as the "username" in the server-side OPAQUE calls.
     const USER_ID: &[u8] = b"alice@boomleft.example";

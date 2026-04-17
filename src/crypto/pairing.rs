@@ -26,7 +26,7 @@ use std::fmt;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use ed25519_dalek::{Signer, Verifier};
-use rand::rngs::OsRng;
+use rand_core::OsRng;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 

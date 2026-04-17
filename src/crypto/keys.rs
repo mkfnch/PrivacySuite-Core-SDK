@@ -15,7 +15,7 @@
 use std::fmt;
 
 use argon2::{Algorithm, Argon2, Params, Version};
-use rand::RngCore;
+use rand_core::{OsRng, RngCore};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -95,7 +95,7 @@ impl Salt {
     /// Returns [`CryptoError::Rng`] if the OS entropy source is unavailable.
     pub fn generate() -> Result<Self, CryptoError> {
         let mut bytes = [0u8; SALT_LEN];
-        rand::rngs::OsRng
+        OsRng
             .try_fill_bytes(&mut bytes)
             .map_err(|_| CryptoError::Rng)?;
         Ok(Self { bytes })

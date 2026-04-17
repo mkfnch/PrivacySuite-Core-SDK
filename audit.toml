@@ -1,0 +1,18 @@
+# cargo-audit configuration for PrivacySuite Core SDK
+# Run: cargo audit
+#
+# See also `deny.toml` for the corresponding `cargo-deny` ignore with the
+# full applicability analysis. This file only re-states the ignore for the
+# `cargo-audit` tool, which has its own config schema.
+
+[advisories]
+# RUSTSEC-2026-0097 — `rand` ThreadRng unsoundness with custom logger.
+#
+# Full applicability analysis lives in `deny.toml`. Short version: neither
+# first-party code nor the single transitive caller (`opaque-ke 3.0`) ever
+# uses `thread_rng()`/`rand::rng()` — both route randomness exclusively
+# through caller-provided `OsRng`. The pre-conditions for the advisory
+# cannot arise in this workspace.
+#
+# Revisit when opaque-ke 4.x ships stable and transitions to rand 0.9.3+.
+ignore = ["RUSTSEC-2026-0097"]

@@ -20,7 +20,7 @@
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::XChaCha20Poly1305;
-use rand::RngCore;
+use rand_core::{OsRng, RngCore};
 
 use crate::crypto::keys::VaultKey;
 use crate::error::CryptoError;
@@ -59,7 +59,7 @@ const MIN_CIPHERTEXT_LEN: usize = NONCE_LEN + TAG_LEN;
 /// ```
 pub fn encrypt(key: &VaultKey, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>, CryptoError> {
     let mut nonce_bytes = [0u8; NONCE_LEN];
-    rand::rngs::OsRng
+    OsRng
         .try_fill_bytes(&mut nonce_bytes)
         .map_err(|_| CryptoError::Rng)?;
 

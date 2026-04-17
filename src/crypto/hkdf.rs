@@ -91,8 +91,13 @@ pub fn hkdf_expand(prk: &[u8], info: &[u8], output_len: usize) -> Result<Vec<u8>
     // zeroize the previous block in place every iteration. The old
     // `t_prev = t_i.to_vec()` pattern allocated a new Vec per iteration
     // and let the deallocated buffer leak partial PRF output onto the heap.
+    //
+    // `t_prev_populated` tracks whether T(i-1) holds a real PRF block (after
+    // the first iteration) vs. the all-zero initialisation (iteration 1, per
+    // RFC 5869 T(0) = empty string). We always feed 32 fixed bytes into HMAC
+    // but skip the update call on iteration 1, matching the RFC.
     let mut t_prev = [0u8; 32];
-    let mut t_prev_len: usize = 0;
+    let mut t_prev_populated = false;
 
     for i in 1..=n {
         // SECURITY: HMAC-SHA256 accepts any key length — this cannot fail
@@ -103,7 +108,9 @@ pub fn hkdf_expand(prk: &[u8], info: &[u8], output_len: usize) -> Result<Vec<u8>
             okm.zeroize();
             return Err(CryptoError::KeyDerivation);
         };
-        mac.update(&t_prev[..t_prev_len]);
+        if t_prev_populated {
+            mac.update(&t_prev);
+        }
         mac.update(info);
         #[allow(clippy::cast_possible_truncation)]
         mac.update(&[i as u8]);
@@ -111,12 +118,12 @@ pub fn hkdf_expand(prk: &[u8], info: &[u8], output_len: usize) -> Result<Vec<u8>
 
         // Zeroize the previous block before overwriting it.
         t_prev.zeroize();
-        t_prev.copy_from_slice(&t_i);
-        t_prev_len = 32;
+        t_prev.copy_from_slice(t_i.as_slice());
+        t_prev_populated = true;
 
         let remaining = output_len - okm.len();
         let take = remaining.min(32);
-        okm.extend_from_slice(&t_i[..take]);
+        okm.extend_from_slice(t_i.get(..take).unwrap_or(&[]));
     }
 
     // Final scrub of the last intermediate block.
