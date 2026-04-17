@@ -31,7 +31,7 @@ tauri-plugin-privacysuite/  # Tauri plugin wrapping core
 - **Vault initialization** — Argon2id key derivation from user passphrase; 24-word BIP39 mnemonic recovery; Stronghold secure storage
 - **XChaCha20-Poly1305 encryption** — Encrypt arbitrary payloads at rest; 192-bit nonce eliminates nonce collision concerns
 - **SQLCipher integration** — Encrypted SQLite with SDK-derived keys; no per-operation PBKDF2 overhead
-- **Automerge CRDT sync** — E2EE document sync via relay; relay never reads document content; LAN P2P and WebSocket relay transports
+- **Automerge CRDT sync** — E2EE document sync via WebSocket relay; relay never reads document content
 - **Device pairing** — X25519 DH key exchange via QR code for adding new devices to sync
 - **Multi-tier privacy networking**:
   - **Tier 1 (Default):** DNS-over-HTTPS via Cloudflare/Quad9 — ISP cannot see DNS queries
@@ -97,7 +97,7 @@ cargo test
 2. **No WebCrypto** — All cryptographic operations run in Rust; browser-side crypto is forbidden
 3. **RustCrypto only** — Pure Rust implementations preferred over ring (C/ASM) or openssl (FFI)
 4. **Mobile-first parameters** — All Argon2id parameters validated on ARM mobile hardware
-5. **Transport-agnostic sync** — CRDT sync works identically over LAN P2P, WebSocket relay, and future transports
+5. **Transport-agnostic sync** — CRDT sync is trait-based so future transports (LAN P2P, Tor onion services) can drop in without protocol changes
 
 ## Transparency Label
 

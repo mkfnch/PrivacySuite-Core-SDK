@@ -20,9 +20,9 @@
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::XChaCha20Poly1305;
-use rand_core::{OsRng, RngCore};
 
 use crate::crypto::keys::VaultKey;
+use crate::crypto::util::fill_random;
 use crate::error::CryptoError;
 
 /// Nonce size for XChaCha20-Poly1305 (192 bits).
@@ -58,10 +58,7 @@ const MIN_CIPHERTEXT_LEN: usize = NONCE_LEN + TAG_LEN;
 /// plaintext.zeroize();
 /// ```
 pub fn encrypt(key: &VaultKey, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>, CryptoError> {
-    let mut nonce_bytes = [0u8; NONCE_LEN];
-    OsRng
-        .try_fill_bytes(&mut nonce_bytes)
-        .map_err(|_| CryptoError::Rng)?;
+    let nonce_bytes = fill_random::<NONCE_LEN>()?;
 
     let cipher =
         XChaCha20Poly1305::new_from_slice(key.as_bytes()).map_err(|_| CryptoError::Encryption)?;

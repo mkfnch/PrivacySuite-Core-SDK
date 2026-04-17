@@ -294,8 +294,8 @@ mod tests {
         let _ = original.put("secret", "launch codes");
         let _ = original.put("count", "42");
 
-        let blob = original.save_encrypted(&key).ok().unwrap();
-        let loaded = EncryptedDocument::load_encrypted(&blob, &key).ok().unwrap();
+        let blob = original.save_encrypted(&key).unwrap();
+        let loaded = EncryptedDocument::load_encrypted(&blob, &key).unwrap();
 
         assert_eq!(loaded.get("secret").as_deref(), Some("launch codes"));
         assert_eq!(loaded.get("count").as_deref(), Some("42"));
@@ -308,7 +308,7 @@ mod tests {
 
         let mut doc = EncryptedDocument::new();
         let _ = doc.put("x", "y");
-        let blob = doc.save_encrypted(&key).ok().unwrap();
+        let blob = doc.save_encrypted(&key).unwrap();
 
         let result = EncryptedDocument::load_encrypted(&blob, &bad);
         assert!(result.is_err());

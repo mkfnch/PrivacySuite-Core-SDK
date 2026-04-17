@@ -15,12 +15,12 @@ use std::sync::OnceLock;
 
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
-use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256, Sha512};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::crypto::keys::{VaultKey, KEY_LEN};
+use crate::crypto::util::fill_random;
 use crate::error::CryptoError;
 
 const ENTROPY_BYTES: usize = 32;
@@ -198,11 +198,7 @@ impl Mnemonic {
     /// ```
     pub fn generate() -> Result<Self, CryptoError> {
         let _wl = wordlist()?;
-        let mut entropy = [0u8; ENTROPY_BYTES];
-        OsRng
-            .try_fill_bytes(&mut entropy)
-            .map_err(|_| CryptoError::Rng)?;
-        Ok(Self { entropy })
+        Ok(Self { entropy: fill_random::<ENTROPY_BYTES>()? })
     }
 
     /// Reconstructs a [`Mnemonic`] from a space-separated word string.

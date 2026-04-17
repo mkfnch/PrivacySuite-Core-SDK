@@ -15,10 +15,10 @@
 use std::fmt;
 
 use argon2::{Algorithm, Argon2, Params, Version};
-use rand_core::{OsRng, RngCore};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use crate::crypto::util::fill_random;
 use crate::error::CryptoError;
 
 /// Argon2id memory cost in KiB (64 MB = 65536 KiB).
@@ -94,11 +94,7 @@ impl Salt {
     ///
     /// Returns [`CryptoError::Rng`] if the OS entropy source is unavailable.
     pub fn generate() -> Result<Self, CryptoError> {
-        let mut bytes = [0u8; SALT_LEN];
-        OsRng
-            .try_fill_bytes(&mut bytes)
-            .map_err(|_| CryptoError::Rng)?;
-        Ok(Self { bytes })
+        Ok(Self { bytes: fill_random::<SALT_LEN>()? })
     }
 
     /// Creates a `Salt` from an existing 32-byte array.
@@ -114,11 +110,7 @@ impl Salt {
     /// Returns [`CryptoError::InvalidLength`] if the slice is not [`SALT_LEN`] bytes.
     pub fn from_slice(slice: &[u8]) -> Result<Self, CryptoError> {
         let bytes: [u8; SALT_LEN] =
-            slice.try_into().map_err(|_| CryptoError::InvalidLength {
-                context: "salt",
-                expected: SALT_LEN,
-                actual: slice.len(),
-            })?;
+            slice.try_into().map_err(|_| CryptoError::InvalidLength)?;
         Ok(Self { bytes })
     }
 
@@ -238,15 +230,25 @@ impl KdfParams {
 /// assert_eq!(key.as_bytes().len(), 32);
 /// ```
 pub fn derive_key(passphrase: &[u8], salt: &Salt) -> Result<VaultKey, CryptoError> {
+    argon2id_derive(passphrase, salt, ARGON2_M_COST_KIB, ARGON2_T_COST, ARGON2_P_COST)
+}
+
+/// Shared Argon2id derivation primitive — single place where we instantiate
+/// the algorithm, feed it the passphrase and salt, and handle the error
+/// path (zeroize the output buffer, return an opaque error).
+fn argon2id_derive(
+    passphrase: &[u8],
+    salt: &Salt,
+    m_cost_kib: u32,
+    t_cost: u32,
+    p_cost: u32,
+) -> Result<VaultKey, CryptoError> {
     if passphrase.is_empty() {
         return Err(CryptoError::KeyDerivation);
     }
-
-    let params = Params::new(ARGON2_M_COST_KIB, ARGON2_T_COST, ARGON2_P_COST, Some(KEY_LEN))
+    let params = Params::new(m_cost_kib, t_cost, p_cost, Some(KEY_LEN))
         .map_err(|_| CryptoError::KeyDerivation)?;
-
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-
     let mut key_bytes = [0u8; KEY_LEN];
     if argon2
         .hash_password_into(passphrase, salt.as_bytes(), &mut key_bytes)
@@ -255,7 +257,6 @@ pub fn derive_key(passphrase: &[u8], salt: &Salt) -> Result<VaultKey, CryptoErro
         key_bytes.zeroize();
         return Err(CryptoError::KeyDerivation);
     }
-
     Ok(VaultKey::from_bytes(key_bytes))
 }
 
@@ -292,26 +293,13 @@ pub fn derive_key_with_params(
     salt: &Salt,
     kdf_params: &KdfParams,
 ) -> Result<VaultKey, CryptoError> {
-    if passphrase.is_empty() {
-        return Err(CryptoError::KeyDerivation);
-    }
-
-    let m_cost_kib = kdf_params.m_cost_mib.saturating_mul(1024);
-    let params = Params::new(m_cost_kib, kdf_params.t_cost, kdf_params.p_cost, Some(KEY_LEN))
-        .map_err(|_| CryptoError::KeyDerivation)?;
-
-    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-
-    let mut key_bytes = [0u8; KEY_LEN];
-    if argon2
-        .hash_password_into(passphrase, salt.as_bytes(), &mut key_bytes)
-        .is_err()
-    {
-        key_bytes.zeroize();
-        return Err(CryptoError::KeyDerivation);
-    }
-
-    Ok(VaultKey::from_bytes(key_bytes))
+    argon2id_derive(
+        passphrase,
+        salt,
+        kdf_params.m_cost_mib.saturating_mul(1024),
+        kdf_params.t_cost,
+        kdf_params.p_cost,
+    )
 }
 
 #[cfg(test)]

@@ -23,7 +23,7 @@
 //! - [`auth`] — OPAQUE zero-knowledge password authentication (**`auth`** feature, on by default).
 //! - [`storage`] — Encrypted on-device storage backed by `SQLCipher` (**`storage`** feature).
 //! - [`crdt`] — End-to-end encrypted CRDT documents backed by Automerge (**`sync`** feature).
-//! - [`sync`] — E2EE sync protocol with LAN P2P and `WebSocket` relay transports (**`sync`** feature).
+//! - [`sync`] — E2EE sync protocol over a `WebSocket` relay (**`sync`** feature).
 //! - [`networking`] — Multi-tier privacy networking: `DoH`, OHTTP, and Tor (**`networking`** feature).
 
 #![forbid(unsafe_code)]

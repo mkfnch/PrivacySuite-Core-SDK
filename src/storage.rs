@@ -36,13 +36,6 @@ impl fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
-/// Prefix of the SQLCipher keying PRAGMA. Kept at module scope so the string
-/// literal lives in `.rodata` and does not cause a Vec reallocation when
-/// appended to a pre-sized buffer in [`apply_key`].
-const PRAGMA_PREFIX: &str = "PRAGMA key = \"x'";
-/// Suffix of the SQLCipher keying PRAGMA. See [`PRAGMA_PREFIX`].
-const PRAGMA_SUFFIX: &str = "'\";";
-
 impl From<rusqlite::Error> for StorageError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Database(err.to_string())
@@ -64,52 +57,33 @@ impl fmt::Debug for EncryptedDb {
     }
 }
 
-/// Apply the encryption key and hardened pragmas to a freshly opened
-/// connection.
+/// Build the full SQLCipher init PRAGMA sequence into a single buffer sized
+/// exactly once.
 ///
-/// # Security
+/// `cipher_memory_security = ON` is issued before `PRAGMA key` per
+/// SQLCipher requirements: memory security must be configured before the
+/// key is parsed so SQLCipher's zeroization covers the keying buffers.
 ///
-/// - `cipher_memory_security = ON` is issued BEFORE `PRAGMA key`. Per
-///   SQLCipher documentation, memory security must be configured before the
-///   key is applied so that SQLCipher's internal zeroization covers the
-///   buffers allocated during keying, including the parsed key itself.
-/// - The PRAGMA-key string is pre-sized with sufficient capacity so the
-///   underlying `String` buffer is never reallocated mid-build. A
-///   reallocation would deallocate the partially-filled original buffer
-///   without zeroizing it, leaving partial hex key bytes on the heap.
-/// - After `execute_batch`, the PRAGMA string (which holds the hex key) is
-///   zeroized before being dropped.
+/// A pre-sized buffer avoids Vec reallocation mid-build — a reallocation
+/// would deallocate a partially-written buffer without zeroizing it,
+/// leaking partial hex-key bytes onto the heap.
 fn apply_key(conn: &Connection, key: &VaultKey) -> Result<(), StorageError> {
-    // SECURITY: Memory security MUST be enabled before keying so SQLCipher
-    // zeroizes buffers created during key processing.
-    conn.execute_batch("PRAGMA cipher_memory_security = ON;")?;
+    const PREFIX: &str = "PRAGMA cipher_memory_security = ON; PRAGMA key = \"x'";
+    const SUFFIX: &str = "'\";";
+    let capacity = PREFIX.len() + key.as_bytes().len() * 2 + SUFFIX.len();
 
-    // SECURITY: Exact capacity prevents Vec growth — a reallocation would
-    // leak partial hex key bytes on the heap without zeroization.
-    //   "PRAGMA key = \"x'"     = 16 bytes
-    //   hex-encoded KEY_LEN key = KEY_LEN * 2 bytes
-    //   "'\";"                  = 3 bytes
-    let required_capacity =
-        PRAGMA_PREFIX.len() + (key.as_bytes().len() * 2) + PRAGMA_SUFFIX.len();
-
-    let mut pragma = String::with_capacity(required_capacity);
-    pragma.push_str(PRAGMA_PREFIX);
+    let mut pragma = String::with_capacity(capacity);
+    pragma.push_str(PREFIX);
     for b in key.as_bytes() {
         let _ = write!(pragma, "{b:02x}");
     }
-    pragma.push_str(PRAGMA_SUFFIX);
-    // Invariant: no reallocation occurred.
-    debug_assert_eq!(pragma.len(), required_capacity);
-    debug_assert_eq!(pragma.capacity(), required_capacity);
+    pragma.push_str(SUFFIX);
+    debug_assert_eq!(pragma.len(), capacity);
+    debug_assert_eq!(pragma.capacity(), capacity);
 
-    let exec_result = conn.execute_batch(&pragma);
-
-    // Zeroize the PRAGMA string regardless of success — it contains the full
-    // hex key and must be scrubbed even on error paths.
+    let result = conn.execute_batch(&pragma);
     pragma.zeroize();
-
-    exec_result?;
-
+    result?;
     Ok(())
 }
 

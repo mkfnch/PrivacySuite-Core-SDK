@@ -35,6 +35,28 @@
 use crate::crypto::keys::{VaultKey, KEY_LEN};
 use crate::error::CryptoError;
 
+/// Derives a 32-byte key from input key material using BLAKE3's
+/// `derive_key` mode, bound to the given UTF-8 `context`.
+///
+/// This is the shared primitive used by [`derive_subkey`] and
+/// [`crate::crypto::pairing::derive_pairing_key`]. It exists so both
+/// call sites route through the same BLAKE3 invariants.
+///
+/// # Errors
+///
+/// Returns [`CryptoError::KeyDerivation`] if `context` is empty.
+pub(crate) fn blake3_derive(context: &str, ikm: &[u8]) -> Result<VaultKey, CryptoError> {
+    if context.is_empty() {
+        return Err(CryptoError::KeyDerivation);
+    }
+    let mut hasher = blake3::Hasher::new_derive_key(context);
+    let _ = hasher.update(ikm);
+    let hash = hasher.finalize();
+    let mut key_bytes = [0u8; KEY_LEN];
+    key_bytes.copy_from_slice(&hash.as_bytes()[..KEY_LEN]);
+    Ok(VaultKey::from_bytes(key_bytes))
+}
+
 /// Derives a purpose-specific [`VaultKey`] from a master key using BLAKE3.
 ///
 /// The `context` string binds the derived key to a specific purpose,
@@ -45,17 +67,7 @@ use crate::error::CryptoError;
 ///
 /// Returns [`CryptoError::KeyDerivation`] if `context` is empty.
 pub fn derive_subkey(master: &VaultKey, context: &str) -> Result<VaultKey, CryptoError> {
-    if context.is_empty() {
-        return Err(CryptoError::KeyDerivation);
-    }
-
-    let mut deriver = blake3::Hasher::new_derive_key(context);
-    let _ = deriver.update(master.as_bytes());
-    let hash = deriver.finalize();
-
-    let mut key_bytes = [0u8; KEY_LEN];
-    key_bytes.copy_from_slice(&hash.as_bytes()[..KEY_LEN]);
-    Ok(VaultKey::from_bytes(key_bytes))
+    blake3_derive(context, master.as_bytes())
 }
 
 #[cfg(test)]

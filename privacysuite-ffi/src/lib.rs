@@ -78,7 +78,7 @@ impl From<CryptoError> for PrivacySuiteError {
             CryptoError::Decryption => Self::Decryption,
             CryptoError::Rng => Self::Rng,
             CryptoError::InvalidMnemonic => Self::InvalidMnemonic,
-            CryptoError::InvalidLength { .. } => Self::InvalidLength,
+            CryptoError::InvalidLength => Self::InvalidLength,
             CryptoError::Base64Decode => Self::Base64Decode,
             CryptoError::SignatureInvalid => Self::SignatureInvalid,
             CryptoError::InvalidKey => Self::InvalidKey,

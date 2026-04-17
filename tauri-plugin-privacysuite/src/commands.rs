@@ -4,21 +4,31 @@
 //! When building inside a Tauri project, uncomment the `tauri` dependency
 //! in `Cargo.toml` and add the `#[tauri::command]` attributes.
 //!
-//! All commands accept and return serializable types from [`super::models`].
 //! Secret material (keys, mnemonics) is never sent over IPC — only opaque
 //! handles or encrypted blobs cross the bridge.
+//!
+//! The former `derive_subkey` command that returned raw sub-key bytes has
+//! been deliberately removed. Use [`encrypt_blob_with_subkey`] /
+//! [`decrypt_blob_with_subkey`] instead so the sub-key is derived and
+//! consumed inside Rust.
 
 use privacysuite_core_sdk::crypto::{aead, kdf, keys, mnemonic};
-use privacysuite_core_sdk::error::CryptoError;
+use privacysuite_core_sdk::crypto::keys::VaultKey;
 
 use crate::models::{EncryptedBlob, KeyHandle, MnemonicPhrase};
 
-/// SECURITY: Minimum passphrase length enforced at the IPC boundary.
+/// Derive the master key from a passphrase + salt pair supplied over IPC,
+/// applying a non-empty-passphrase check at the boundary.
 ///
-/// A zero-length or trivially short passphrase offers no cryptographic value
-/// regardless of how strong Argon2id is. This guards against frontend bugs
-/// that might accidentally invoke vault creation with an empty string.
-const MIN_PASSPHRASE_BYTES: usize = 1;
+/// Returns a stringly-typed error so callers can propagate with `?` and
+/// so the wire format stays flat.
+fn derive_master(passphrase: &str, salt: &[u8]) -> Result<VaultKey, String> {
+    if passphrase.is_empty() {
+        return Err("passphrase must not be empty".to_string());
+    }
+    let salt = keys::Salt::from_slice(salt).map_err(|e| e.to_string())?;
+    keys::derive_key(passphrase.as_bytes(), &salt).map_err(|e| e.to_string())
+}
 
 /// Generate a new vault: salt + mnemonic.
 ///
@@ -30,34 +40,20 @@ const MIN_PASSPHRASE_BYTES: usize = 1;
 /// Returns a serialised error string if input validation, key derivation, or
 /// mnemonic generation fails.
 pub fn vault_create(passphrase: &str) -> Result<(KeyHandle, MnemonicPhrase), String> {
-    // SECURITY: Validate at the IPC boundary — never rely on the JS caller.
-    if passphrase.as_bytes().len() < MIN_PASSPHRASE_BYTES {
+    if passphrase.is_empty() {
         return Err("passphrase must not be empty".to_string());
     }
-
     let salt = keys::Salt::generate().map_err(|e| e.to_string())?;
-    // Derive once to surface Argon2id errors early; the resulting key is
-    // dropped immediately and its memory is scrubbed by ZeroizeOnDrop.
+    // Surface Argon2id errors early. The derived key is scrubbed on drop.
     let _key = keys::derive_key(passphrase.as_bytes(), &salt).map_err(|e| e.to_string())?;
-    let mnem = mnemonic::Mnemonic::generate().map_err(|e| e.to_string())?;
-    let words = mnem.to_phrase();
-
-    let handle = KeyHandle {
-        salt: salt.as_bytes().to_vec(),
-    };
-    let phrase = MnemonicPhrase { words };
-
-    Ok((handle, phrase))
+    let words = mnemonic::Mnemonic::generate().map_err(|e| e.to_string())?.to_phrase();
+    Ok((
+        KeyHandle { salt: salt.as_bytes().to_vec() },
+        MnemonicPhrase { words },
+    ))
 }
 
-/// Encrypt a plaintext blob using a passphrase-derived key, optionally
-/// routed through a hardcoded sub-key derivation context.
-///
-/// When `subkey_context` is non-empty, the master key is derived from the
-/// passphrase, then a purpose-specific sub-key is derived via BLAKE3 with
-/// that context, and the plaintext is encrypted under the sub-key. This
-/// lets a frontend perform purpose-separated encryption without ever
-/// exposing raw key material over IPC.
+/// Encrypt a plaintext blob under a passphrase-derived master key.
 ///
 /// # Errors
 ///
@@ -67,19 +63,14 @@ pub fn encrypt_blob(
     passphrase: &str,
     salt: &[u8],
     plaintext: &[u8],
-    context: &str,
+    aad: &str,
 ) -> Result<EncryptedBlob, String> {
-    if passphrase.as_bytes().len() < MIN_PASSPHRASE_BYTES {
-        return Err("passphrase must not be empty".to_string());
-    }
-    let salt = keys::Salt::from_slice(salt).map_err(|e| e.to_string())?;
-    let key = keys::derive_key(passphrase.as_bytes(), &salt).map_err(|e| e.to_string())?;
-    let ciphertext =
-        aead::encrypt(&key, plaintext, context.as_bytes()).map_err(|e| e.to_string())?;
+    let key = derive_master(passphrase, salt)?;
+    let ciphertext = aead::encrypt(&key, plaintext, aad.as_bytes()).map_err(|e| e.to_string())?;
     Ok(EncryptedBlob { ciphertext })
 }
 
-/// Decrypt an encrypted blob.
+/// Decrypt a blob produced by [`encrypt_blob`].
 ///
 /// # Errors
 ///
@@ -90,22 +81,17 @@ pub fn decrypt_blob(
     passphrase: &str,
     salt: &[u8],
     blob: &EncryptedBlob,
-    context: &str,
+    aad: &str,
 ) -> Result<Vec<u8>, String> {
-    if passphrase.as_bytes().len() < MIN_PASSPHRASE_BYTES {
-        return Err("passphrase must not be empty".to_string());
-    }
-    let salt = keys::Salt::from_slice(salt).map_err(|e| e.to_string())?;
-    let key = keys::derive_key(passphrase.as_bytes(), &salt).map_err(|e| e.to_string())?;
-    aead::decrypt(&key, &blob.ciphertext, context.as_bytes()).map_err(|e| e.to_string())
+    let key = derive_master(passphrase, salt)?;
+    aead::decrypt(&key, &blob.ciphertext, aad.as_bytes()).map_err(|e| e.to_string())
 }
 
-/// Encrypt a plaintext blob using a **purpose-specific sub-key** derived
-/// from the passphrase-derived master and the caller-provided `subkey_context`.
+/// Encrypt a plaintext blob under a **purpose-specific sub-key** derived
+/// from the passphrase-derived master and `subkey_context`.
 ///
-/// This is the zero-knowledge-safe replacement for returning sub-key bytes
-/// over IPC: raw key material stays inside Rust, and the frontend only sees
-/// an opaque ciphertext.
+/// Raw key material never crosses the IPC boundary: the sub-key is derived
+/// and consumed entirely inside Rust for this single operation.
 ///
 /// # Errors
 ///
@@ -118,17 +104,12 @@ pub fn encrypt_blob_with_subkey(
     plaintext: &[u8],
     aad: &str,
 ) -> Result<EncryptedBlob, String> {
-    if passphrase.as_bytes().len() < MIN_PASSPHRASE_BYTES {
-        return Err("passphrase must not be empty".to_string());
-    }
     if subkey_context.is_empty() {
         return Err("subkey_context must not be empty".to_string());
     }
-    let salt = keys::Salt::from_slice(salt).map_err(|e| e.to_string())?;
-    let master = keys::derive_key(passphrase.as_bytes(), &salt).map_err(|e| e.to_string())?;
+    let master = derive_master(passphrase, salt)?;
     let subkey = kdf::derive_subkey(&master, subkey_context).map_err(|e| e.to_string())?;
-    let ciphertext =
-        aead::encrypt(&subkey, plaintext, aad.as_bytes()).map_err(|e| e.to_string())?;
+    let ciphertext = aead::encrypt(&subkey, plaintext, aad.as_bytes()).map_err(|e| e.to_string())?;
     Ok(EncryptedBlob { ciphertext })
 }
 
@@ -145,14 +126,10 @@ pub fn decrypt_blob_with_subkey(
     blob: &EncryptedBlob,
     aad: &str,
 ) -> Result<Vec<u8>, String> {
-    if passphrase.as_bytes().len() < MIN_PASSPHRASE_BYTES {
-        return Err("passphrase must not be empty".to_string());
-    }
     if subkey_context.is_empty() {
         return Err("subkey_context must not be empty".to_string());
     }
-    let salt = keys::Salt::from_slice(salt).map_err(|e| e.to_string())?;
-    let master = keys::derive_key(passphrase.as_bytes(), &salt).map_err(|e| e.to_string())?;
+    let master = derive_master(passphrase, salt)?;
     let subkey = kdf::derive_subkey(&master, subkey_context).map_err(|e| e.to_string())?;
     aead::decrypt(&subkey, &blob.ciphertext, aad.as_bytes()).map_err(|e| e.to_string())
 }
@@ -163,20 +140,5 @@ pub fn decrypt_blob_with_subkey(
 ///
 /// Returns an error string if the phrase is invalid.
 pub fn verify_mnemonic(phrase: &str) -> Result<(), String> {
-    let _m = mnemonic::Mnemonic::from_phrase(phrase).map_err(|e: CryptoError| e.to_string())?;
-    Ok(())
+    mnemonic::Mnemonic::from_phrase(phrase).map(|_| ()).map_err(|e| e.to_string())
 }
-
-// SECURITY: The former `derive_subkey` IPC command has been removed.
-//
-// It returned raw BLAKE3-derived sub-key bytes inside an `EncryptedBlob`
-// (which, despite the name, carried *plaintext* key material). Exporting
-// raw key bytes to the JavaScript frontend:
-//   1. Copies the key into JS heap memory that Rust cannot zeroize.
-//   2. May flow through Tauri's IPC logging or devtools.
-//   3. Makes a frontend XSS or supply-chain compromise equivalent to full
-//      vault compromise.
-//
-// Use [`encrypt_blob_with_subkey`] / [`decrypt_blob_with_subkey`] instead:
-// the sub-key is derived *and consumed* inside Rust for each operation,
-// so raw key bytes never cross the IPC boundary.

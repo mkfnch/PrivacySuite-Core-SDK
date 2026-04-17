@@ -4,10 +4,8 @@
 //!
 //! The sync protocol enables multi-device document synchronisation where the
 //! relay server **never** reads document content — it only passes E2EE blobs
-//! between devices. Two transport backends are provided:
-//!
-//! - [`RelayTransport`] — WebSocket relay via `tokio-tungstenite`.
-//! - [`LanDiscovery`] — placeholder for LAN peer-to-peer discovery.
+//! between devices. The current transport is [`RelayTransport`], a WebSocket
+//! relay via `tokio-tungstenite`.
 //!
 //! [`EncryptedTransport`] wraps any [`SyncTransport`] implementation,
 //! encrypting every message with XChaCha20-Poly1305 before it leaves the
@@ -21,11 +19,9 @@
 //! is bound to every encryption to prevent cross-protocol ciphertext reuse.
 
 use std::fmt;
-use std::net::SocketAddr;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
-use zeroize::Zeroize;
 
 use crate::crypto::aead;
 use crate::crypto::keys::VaultKey;
@@ -220,101 +216,38 @@ impl SyncTransport for RelayTransport {
 /// Wraps any [`SyncTransport`], encrypting outbound messages and decrypting
 /// inbound messages with XChaCha20-Poly1305.
 ///
-/// The key material is zeroized when this transport is dropped.
+/// The key material is zeroized when this transport is dropped (via
+/// `VaultKey`'s own `ZeroizeOnDrop` impl).
 #[derive(Debug)]
 pub struct EncryptedTransport<T: SyncTransport> {
     inner: T,
-    key_bytes: [u8; 32],
-}
-
-impl<T: SyncTransport> Drop for EncryptedTransport<T> {
-    fn drop(&mut self) {
-        self.key_bytes.zeroize();
-    }
+    key: VaultKey,
 }
 
 impl<T: SyncTransport> EncryptedTransport<T> {
-    /// Wraps `inner` so that every message is encrypted with `key`.
-    ///
-    /// The key bytes are copied into the transport and zeroized on drop.
+    /// Wraps `inner` so that every message is encrypted with a copy of `key`.
     #[must_use]
     pub fn new(inner: T, key: &VaultKey) -> Self {
-        Self {
-            inner,
-            key_bytes: *key.as_bytes(),
-        }
+        Self { inner, key: VaultKey::from_bytes(*key.as_bytes()) }
     }
 }
 
 impl<T: SyncTransport + std::fmt::Debug> SyncTransport for EncryptedTransport<T> {
     async fn send(&mut self, msg: &SyncMessage) -> Result<(), SyncError> {
-        let key = VaultKey::from_bytes(self.key_bytes);
-        let encrypted_payload =
-            aead::encrypt(&key, &msg.payload, SYNC_AAD).map_err(|_| SyncError::Encryption)?;
-
-        let encrypted_msg = SyncMessage {
-            payload: encrypted_payload,
-        };
-        self.inner.send(&encrypted_msg).await
+        let payload =
+            aead::encrypt(&self.key, &msg.payload, SYNC_AAD).map_err(|_| SyncError::Encryption)?;
+        self.inner.send(&SyncMessage { payload }).await
     }
 
     async fn recv(&mut self) -> Result<SyncMessage, SyncError> {
-        let encrypted_msg = self.inner.recv().await?;
-        let key = VaultKey::from_bytes(self.key_bytes);
-        let plaintext = aead::decrypt(&key, &encrypted_msg.payload, SYNC_AAD)
+        let encrypted = self.inner.recv().await?;
+        let payload = aead::decrypt(&self.key, &encrypted.payload, SYNC_AAD)
             .map_err(|_| SyncError::Decryption)?;
-
-        Ok(SyncMessage { payload: plaintext })
+        Ok(SyncMessage { payload })
     }
 
     async fn close(&mut self) -> Result<(), SyncError> {
         self.inner.close().await
-    }
-}
-
-/// Placeholder for LAN peer discovery via mDNS / broadcast.
-///
-/// The LAN transport will allow devices on the same network to sync directly
-/// without routing through the relay server. This is not yet implemented;
-/// the WebSocket relay is the primary transport.
-#[derive(Debug)]
-pub struct LanDiscovery;
-
-impl LanDiscovery {
-    /// Creates a new `LanDiscovery` instance.
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Announces this device's sync service on the given port.
-    ///
-    /// # Errors
-    ///
-    /// Currently always returns [`SyncError::Transport`] — LAN discovery is
-    /// not yet implemented.
-    pub fn announce(&self, _port: u16) -> Result<(), SyncError> {
-        Err(SyncError::Transport(
-            "LAN discovery not yet implemented".into(),
-        ))
-    }
-
-    /// Discovers peer devices on the local network.
-    ///
-    /// # Errors
-    ///
-    /// Currently always returns [`SyncError::Transport`] — LAN discovery is
-    /// not yet implemented.
-    pub fn discover(&self) -> Result<Vec<SocketAddr>, SyncError> {
-        Err(SyncError::Transport(
-            "LAN discovery not yet implemented".into(),
-        ))
-    }
-}
-
-impl Default for LanDiscovery {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -444,15 +377,6 @@ mod tests {
         drop(a);
         let result = b.recv().await;
         assert!(matches!(result, Err(SyncError::ConnectionClosed)));
-    }
-
-    // -- LAN discovery placeholder --
-
-    #[test]
-    fn lan_discovery_returns_not_implemented() {
-        let discovery = LanDiscovery::new();
-        assert!(discovery.announce(8080).is_err());
-        assert!(discovery.discover().is_err());
     }
 
     // -- SyncError Display --

@@ -1,23 +1,37 @@
 //! Cryptographic utility functions.
 //!
-//! Provides common primitives that multiple BoomLeft applications need:
+//! Provides common primitives that multiple `BoomLeft` applications need:
 //! secure random byte generation and constant-time byte comparison.
+
+use rand_core::{OsRng, RngCore};
 
 use crate::error::CryptoError;
 
+/// Fills a stack-allocated `[u8; N]` with OS-supplied entropy.
+///
+/// This is the single entry point for randomness in the SDK — all other
+/// modules delegate here so there is exactly one call site to audit.
+///
+/// # Errors
+///
+/// Returns [`CryptoError::Rng`] if the OS entropy source is unavailable.
+pub fn fill_random<const N: usize>() -> Result<[u8; N], CryptoError> {
+    let mut buf = [0u8; N];
+    OsRng.try_fill_bytes(&mut buf).map_err(|_| CryptoError::Rng)?;
+    Ok(buf)
+}
+
 /// Generates `len` bytes of cryptographically secure random data.
 ///
-/// Uses the OS entropy source (`OsRng`).
+/// Prefer [`fill_random`] when the length is known at compile time — it
+/// avoids the heap allocation.
 ///
 /// # Errors
 ///
 /// Returns [`CryptoError::Rng`] if the OS entropy source is unavailable.
 pub fn secure_random(len: usize) -> Result<Vec<u8>, CryptoError> {
-    use rand_core::{OsRng, RngCore};
     let mut buf = vec![0u8; len];
-    OsRng
-        .try_fill_bytes(&mut buf)
-        .map_err(|_| CryptoError::Rng)?;
+    OsRng.try_fill_bytes(&mut buf).map_err(|_| CryptoError::Rng)?;
     Ok(buf)
 }
 

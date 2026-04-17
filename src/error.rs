@@ -25,15 +25,12 @@ pub enum CryptoError {
     Rng,
     /// Invalid BIP39 mnemonic phrase.
     InvalidMnemonic,
-    /// Input has wrong length.
-    InvalidLength {
-        /// What the input represents.
-        context: &'static str,
-        /// Expected length in bytes.
-        expected: usize,
-        /// Actual length in bytes.
-        actual: usize,
-    },
+    /// Input has the wrong length.
+    ///
+    /// The specific expected/actual values are intentionally omitted: the
+    /// variant is opaque by design so error matching depends on the class
+    /// of failure rather than on a structured payload no caller reads.
+    InvalidLength,
     /// Base64 decoding failed.
     Base64Decode,
     /// Ed25519 signature verification failed.
@@ -45,19 +42,17 @@ pub enum CryptoError {
 
 impl fmt::Display for CryptoError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::KeyDerivation => f.write_str("key derivation failed"),
-            Self::Encryption => f.write_str("encryption failed"),
-            Self::Decryption => f.write_str("decryption failed"),
-            Self::Rng => f.write_str("random number generation failed"),
-            Self::InvalidMnemonic => f.write_str("invalid mnemonic phrase"),
-            Self::InvalidLength { context, expected, actual } => {
-                write!(f, "invalid {context} length: expected {expected}, got {actual}")
-            }
-            Self::Base64Decode => f.write_str("base64 decoding failed"),
-            Self::SignatureInvalid => f.write_str("signature verification failed"),
-            Self::InvalidKey => f.write_str("invalid cryptographic key"),
-        }
+        f.write_str(match self {
+            Self::KeyDerivation => "key derivation failed",
+            Self::Encryption => "encryption failed",
+            Self::Decryption => "decryption failed",
+            Self::Rng => "random number generation failed",
+            Self::InvalidMnemonic => "invalid mnemonic phrase",
+            Self::InvalidLength => "input has the wrong length",
+            Self::Base64Decode => "base64 decoding failed",
+            Self::SignatureInvalid => "signature verification failed",
+            Self::InvalidKey => "invalid cryptographic key",
+        })
     }
 }
 

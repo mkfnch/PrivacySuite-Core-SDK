@@ -70,18 +70,10 @@ pub fn hkdf_extract(salt: &[u8], ikm: &[u8]) -> [u8; 32] {
 /// - `output_len` is zero
 pub fn hkdf_expand(prk: &[u8], info: &[u8], output_len: usize) -> Result<Vec<u8>, CryptoError> {
     if prk.len() < 32 {
-        return Err(CryptoError::InvalidLength {
-            context: "HKDF PRK",
-            expected: 32,
-            actual: prk.len(),
-        });
+        return Err(CryptoError::InvalidLength);
     }
     if output_len == 0 || output_len > HKDF_SHA256_MAX_OUTPUT {
-        return Err(CryptoError::InvalidLength {
-            context: "HKDF output length",
-            expected: HKDF_SHA256_MAX_OUTPUT,
-            actual: output_len,
-        });
+        return Err(CryptoError::InvalidLength);
     }
 
     let n = output_len.div_ceil(32);

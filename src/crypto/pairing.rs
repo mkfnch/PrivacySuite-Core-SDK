@@ -30,7 +30,9 @@ use rand_core::OsRng;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::crypto::keys::{VaultKey, KEY_LEN};
+use crate::crypto::keys::VaultKey;
+#[cfg(test)]
+use crate::crypto::keys::KEY_LEN;
 use crate::error::CryptoError;
 
 /// An X25519 keypair used during device pairing.
@@ -147,22 +149,11 @@ pub fn compute_shared_secret(
 ///
 /// # Errors
 ///
-/// Returns [`CryptoError::InvalidLength`] if `context` is not valid UTF-8.
-/// BLAKE3 key derivation requires a UTF-8 context string.
+/// Returns [`CryptoError::InvalidLength`] if `context` is not valid UTF-8,
+/// or [`CryptoError::KeyDerivation`] if `context` is empty.
 pub fn derive_pairing_key(shared: &SharedSecret, context: &[u8]) -> Result<VaultKey, CryptoError> {
-    let context_str = core::str::from_utf8(context).map_err(|_| CryptoError::InvalidLength {
-        context: "BLAKE3 context (must be UTF-8)",
-        expected: 0, // N/A for encoding errors
-        actual: 0,
-    })?;
-    let mut deriver = blake3::Hasher::new_derive_key(context_str);
-    let _ = deriver.update(shared.as_bytes());
-    let hash = deriver.finalize();
-    let mut key_bytes = [0u8; KEY_LEN];
-    // SECURITY: Use slice assertion instead of unwrap_or to ensure all KEY_LEN bytes copied.
-    // BLAKE3 guarantees >= 32 bytes always, this is a defensive invariant check.
-    key_bytes.copy_from_slice(&hash.as_bytes()[..KEY_LEN]);
-    Ok(VaultKey::from_bytes(key_bytes))
+    let context_str = core::str::from_utf8(context).map_err(|_| CryptoError::InvalidLength)?;
+    crate::crypto::kdf::blake3_derive(context_str, shared.as_bytes())
 }
 
 /// Base64-encodes a 32-byte X25519 public key for display as a QR code.
@@ -180,14 +171,7 @@ pub fn encode_pairing_qr(public_key: &PublicKey) -> String {
 /// 32 bytes.
 pub fn decode_pairing_qr(data: &str) -> Result<PublicKey, CryptoError> {
     let raw = BASE64.decode(data).map_err(|_| CryptoError::Base64Decode)?;
-    let bytes: [u8; 32] = raw
-        .as_slice()
-        .try_into()
-        .map_err(|_| CryptoError::InvalidLength {
-            context: "X25519 public key",
-            expected: 32,
-            actual: raw.len(),
-        })?;
+    let bytes: [u8; 32] = raw.as_slice().try_into().map_err(|_| CryptoError::InvalidLength)?;
     Ok(PublicKey::from(bytes))
 }
 
@@ -437,14 +421,7 @@ mod tests {
     fn qr_decode_wrong_length() {
         let short = BASE64.encode([0u8; 16]);
         let result = decode_pairing_qr(&short);
-        assert!(matches!(
-            result,
-            Err(CryptoError::InvalidLength {
-                context: "X25519 public key",
-                expected: 32,
-                actual: 16,
-            })
-        ));
+        assert_eq!(result.err(), Some(CryptoError::InvalidLength));
     }
 
     // -- Ed25519 signing --

@@ -115,22 +115,21 @@ pub const TRACKING_PARAMS: &[&str] = &[
 /// assert_eq!(clean, "https://example.com/?id=123");
 /// ```
 pub fn strip_tracking_params(url_str: &str) -> Result<String, String> {
-    let mut parsed = Url::parse(url_str)
-        .map_err(|e| format!("Invalid URL: {}", e))?;
+    let mut parsed = Url::parse(url_str).map_err(|e| format!("Invalid URL: {e}"))?;
 
+    // ASCII-case-insensitive compare avoids the per-iteration `to_lowercase`
+    // allocation and sidesteps Unicode lowercase quirks (e.g., Turkish İ)
+    // that could let a crafted key slip past the filter. Every entry in
+    // TRACKING_PARAMS is pure ASCII.
     let cleaned: Vec<(String, String)> = parsed
         .query_pairs()
-        .filter(|(key, _)| {
-            let key_lower = key.to_lowercase();
-            !TRACKING_PARAMS.iter().any(|&param| key_lower == param)
-        })
+        .filter(|(k, _)| !TRACKING_PARAMS.iter().any(|p| k.eq_ignore_ascii_case(p)))
         .map(|(k, v)| (k.into_owned(), v.into_owned()))
         .collect();
 
     if cleaned.is_empty() {
         parsed.set_query(None);
     } else {
-        // Re-encode using the url crate's serializer to ensure proper percent-encoding
         let new_query = url::form_urlencoded::Serializer::new(String::new())
             .extend_pairs(cleaned.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .finish();
