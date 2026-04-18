@@ -48,6 +48,21 @@ pub enum NetworkError {
     TorProxy(String),
     /// The caller supplied an invalid or unsupported configuration.
     InvalidConfiguration(String),
+    /// The upstream response body exceeds the configured cap.
+    ///
+    /// Returned either before any body bytes are read (when the
+    /// transport enforces the cap against the advertised
+    /// `Content-Length`) or after reading (when the transport can only
+    /// observe the actual delivered length). Callers can distinguish
+    /// "cap too tight" from "misbehaving upstream" using `observed`
+    /// and `cap`.
+    ResponseTooLarge {
+        /// Observed body length, in bytes. May be the `Content-Length`
+        /// header value when the transport rejects pre-body.
+        observed: u64,
+        /// Configured cap, in bytes.
+        cap: u64,
+    },
 }
 
 impl fmt::Display for NetworkError {
@@ -58,6 +73,12 @@ impl fmt::Display for NetworkError {
             Self::TorProxy(msg) => write!(f, "Tor proxy error: {msg}"),
             Self::InvalidConfiguration(msg) => {
                 write!(f, "invalid configuration: {msg}")
+            }
+            Self::ResponseTooLarge { observed, cap } => {
+                write!(
+                    f,
+                    "response body too large: {observed} bytes exceeds cap of {cap}"
+                )
             }
         }
     }
@@ -519,6 +540,15 @@ mod tests {
 
         let err = NetworkError::InvalidConfiguration("bad".into());
         assert!(err.to_string().contains("bad"));
+
+        let err = NetworkError::ResponseTooLarge {
+            observed: 209_715_201,
+            cap: 209_715_200,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("too large"), "{msg}");
+        assert!(msg.contains("209715201"), "{msg}");
+        assert!(msg.contains("209715200"), "{msg}");
     }
 
     #[test]
