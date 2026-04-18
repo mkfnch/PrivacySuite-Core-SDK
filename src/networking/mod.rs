@@ -160,7 +160,8 @@ impl PrivacyDns {
 /// This implementation uses X25519 for ephemeral key exchange and
 /// XChaCha20-Poly1305 for authenticated encryption. The Gateway's
 /// X25519 public key must be provisioned out-of-band.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "sync", derive(serde::Serialize, serde::Deserialize))]
 pub struct OhttpConfig {
     /// URL of the Relay server (e.g. `"https://relay.boomleft.com/ohttp"`).
     pub relay_url: String,
@@ -225,7 +226,8 @@ impl OhttpConfig {
 }
 
 /// The response payload after decryption from OHTTP Gateway.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug)]
+#[cfg_attr(feature = "sync", derive(serde::Serialize, serde::Deserialize))]
 pub struct OhttpResponsePayload {
     /// HTTP status code from the target server.
     pub status: u16,
@@ -310,6 +312,12 @@ impl Default for TorClient {
 /// Re-exported from [`crate::crypto::pinning`] — available without the
 /// `networking` feature via `privacysuite_core_sdk::crypto::pinning::CertificatePinner`.
 pub use crate::crypto::pinning::CertificatePinner;
+
+#[cfg(feature = "ohttp")]
+pub mod ohttp;
+
+#[cfg(feature = "ohttp")]
+pub use ohttp::{OhttpClient, OhttpRequest, OhttpResponse, OhttpTransport};
 
 #[cfg(test)]
 mod tests {
