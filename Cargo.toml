@@ -19,7 +19,13 @@ auth = ["dep:opaque-ke"]
 storage = ["dep:rusqlite"]
 sync = ["dep:automerge", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:serde", "dep:serde_json"]
 networking = ["dep:hickory-resolver", "dep:tokio-socks", "dep:tokio"]
-full = ["auth", "storage", "sync", "networking"]
+# Oblivious HTTP (RFC 9458) client. Pure-Rust HPKE (DHKEM(X25519,
+# HKDF-SHA256) / HKDF-SHA256 / ChaCha20-Poly1305) built on the SDK's
+# existing crypto primitives. Requires a caller-provided
+# `OhttpTransport` impl — the SDK intentionally does not ship an HTTP
+# client to keep the supply chain minimal. See `networking::ohttp`.
+ohttp = ["networking", "dep:async-trait"]
+full = ["auth", "storage", "sync", "networking", "ohttp"]
 
 [dependencies]
 # --- Crypto primitives (always available) ---
@@ -76,6 +82,14 @@ tokio-socks = { version = "=0.5", optional = true }
 # --- Serialization (optional: "sync" feature) ---
 serde = { version = "=1", features = ["derive"], optional = true }
 serde_json = { version = "=1", optional = true }
+
+# --- OHTTP client (optional: "ohttp" feature) ---
+# async-trait is required for the `OhttpTransport` abstraction — callers
+# implement this trait to plug their own HTTP client into the OHTTP flow
+# (so the SDK never ships a reqwest/hyper stack of its own). 0.1.89 is the
+# version already in Cargo.lock via the existing transitive graph, which
+# keeps multiple-versions clean.
+async-trait = { version = "=0.1.89", optional = true }
 
 [dev-dependencies]
 # SECURITY: Dev dependencies also pinned to prevent test environment drift.
