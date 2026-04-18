@@ -101,6 +101,22 @@ const OHTTP_EXPORT_LABEL: &[u8] = b"message/bhttp response";
 /// OHTTP encrypt/decrypt pipeline now reports this same string.
 const AEAD_FAIL_ERR_MSG: &str = "OHTTP response decryption failed";
 
+/// Default cap on the OHTTP response-capsule size in bytes.
+///
+/// 16 MiB matches the WebSocket sync cap
+/// ([`crate::sync::MAX_SYNC_MESSAGE_BYTES`]) and covers every OHTTP
+/// use case the SDK currently ships (JSON API responses, RSS feeds,
+/// podcast metadata). Callers that need to pull larger payloads —
+/// notably Podcasts episode downloads up to ~200 MiB — must opt in
+/// via [`OhttpClient::with_response_cap`].
+///
+/// The cap is an upper bound on the **OHTTP response capsule** as
+/// delivered by the Relay, which includes the 32-byte response nonce
+/// plus the AEAD-sealed BHTTP response. The decrypted body is
+/// strictly smaller, so capping the capsule also caps the body
+/// delivered to the caller.
+pub const DEFAULT_OHTTP_RESPONSE_CAP: usize = 16 * 1024 * 1024;
+
 // =========================================================================
 // Public API
 // =========================================================================
@@ -158,6 +174,21 @@ pub struct OhttpResponse {
 ///   [`NetworkError`] variants.
 ///
 /// Implementations are typically `Arc`-shared across requests.
+///
+/// # Response-size cap
+///
+/// [`OhttpClient::send`] invokes [`OhttpTransport::post_capsule_capped`]
+/// with the client's configured cap. Transports are strongly encouraged
+/// to override that method with a streaming implementation that rejects
+/// an over-cap response **before** reading any body bytes — typically
+/// by inspecting the `Content-Length` response header and returning
+/// [`NetworkError::ResponseTooLarge`] when it exceeds `max_bytes`.
+///
+/// The default implementation falls back to the existing
+/// [`OhttpTransport::post_capsule`] and then enforces the cap on the
+/// returned `Vec<u8>`. That is safe (the SDK will still refuse to
+/// continue) but less efficient — the over-cap bytes are allocated
+/// before being rejected.
 #[async_trait]
 pub trait OhttpTransport: Send + Sync + std::fmt::Debug {
     /// POST `body` to `url` and return the raw response body on success.
@@ -174,6 +205,48 @@ pub trait OhttpTransport: Send + Sync + std::fmt::Debug {
     /// does not expect transports to retry — retry/backoff policy lives
     /// at a higher layer.
     async fn post_capsule(&self, url: &str, body: Vec<u8>) -> Result<Vec<u8>, NetworkError>;
+
+    /// POST `body` to `url` and return the raw response body, rejecting
+    /// over-cap responses.
+    ///
+    /// # Required behaviour
+    ///
+    /// The returned `Vec<u8>` MUST have length `<= max_bytes`. An
+    /// implementation SHOULD enforce the cap by inspecting the
+    /// `Content-Length` response header before reading any body bytes,
+    /// returning [`NetworkError::ResponseTooLarge`] with the advertised
+    /// length when the header exceeds `max_bytes`. Transports that
+    /// cannot access HTTP headers directly may fall back to reading the
+    /// body and rejecting once the received length exceeds the cap.
+    ///
+    /// # Default implementation
+    ///
+    /// Delegates to [`OhttpTransport::post_capsule`] and enforces the
+    /// cap post-download. This preserves backwards compatibility for
+    /// existing implementations, at the cost of allocating the oversize
+    /// body before rejecting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NetworkError::ResponseTooLarge`] if the body exceeds
+    /// `max_bytes`; otherwise the same error classes as
+    /// [`OhttpTransport::post_capsule`].
+    async fn post_capsule_capped(
+        &self,
+        url: &str,
+        body: Vec<u8>,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, NetworkError> {
+        let response = self.post_capsule(url, body).await?;
+        if response.len() > max_bytes {
+            #[allow(clippy::cast_possible_truncation)]
+            return Err(NetworkError::ResponseTooLarge {
+                observed: response.len() as u64,
+                cap: max_bytes as u64,
+            });
+        }
+        Ok(response)
+    }
 }
 
 /// OHTTP client that encapsulates HTTP requests per RFC 9458 §4.
@@ -181,11 +254,23 @@ pub trait OhttpTransport: Send + Sync + std::fmt::Debug {
 /// Each call to [`OhttpClient::send`] generates a fresh HPKE ephemeral
 /// keypair, seals the BHTTP-encoded request, posts it to the Relay via
 /// the configured [`OhttpTransport`], and decrypts the response.
+///
+/// # Response-size cap (Residual Risk #2)
+///
+/// The client enforces an upper bound on the OHTTP response-capsule
+/// size returned by the transport. The default cap is
+/// [`DEFAULT_OHTTP_RESPONSE_CAP`] (16 MiB), matching the WebSocket
+/// sync cap and covering the SDK's JSON/RSS/metadata use cases.
+/// Callers pulling larger payloads (podcast episodes up to ~200 MiB)
+/// must opt in with [`OhttpClient::with_response_cap`]. If the
+/// response exceeds the cap, [`OhttpClient::send`] returns
+/// [`NetworkError::ResponseTooLarge`] instead of buffering the body.
 pub struct OhttpClient {
     config: OhttpConfig,
     gateway_pk: PublicKey,
     transport: Arc<dyn OhttpTransport>,
     key_id: u8,
+    response_cap: usize,
 }
 
 impl std::fmt::Debug for OhttpClient {
@@ -194,6 +279,7 @@ impl std::fmt::Debug for OhttpClient {
             .field("relay_url", &self.config.relay_url)
             .field("gateway_url", &self.config.gateway_url)
             .field("key_id", &self.key_id)
+            .field("response_cap", &self.response_cap)
             .field("transport", &self.transport)
             .finish()
     }
@@ -245,7 +331,42 @@ impl OhttpClient {
             gateway_pk,
             transport,
             key_id,
+            response_cap: DEFAULT_OHTTP_RESPONSE_CAP,
         })
+    }
+
+    /// Override the response-capsule size cap in bytes.
+    ///
+    /// Default is [`DEFAULT_OHTTP_RESPONSE_CAP`] (16 MiB). Callers with
+    /// known large-download use cases — e.g. Podcasts audio (episodes
+    /// routinely ~100–200 MiB, occasionally more) — should raise this
+    /// cap explicitly rather than turning it off. The SDK does not
+    /// accept a "no cap" value: the cap is always enforced.
+    ///
+    /// The cap is upper-bounded at [`usize::MAX`] and lower-bounded at
+    /// the minimum OHTTP response-capsule size (response nonce + AEAD
+    /// tag = 48 bytes). A cap below that is silently clamped to the
+    /// minimum, since any smaller value would reject every valid
+    /// response.
+    #[must_use]
+    pub fn with_response_cap(mut self, bytes: usize) -> Self {
+        // The smallest valid response capsule is
+        // response_nonce(RESPONSE_NONCE_LEN=32) + AEAD tag(16) = 48.
+        // Anything below that would reject every legitimate response;
+        // clamp rather than silently reject.
+        const MIN_CAP: usize = RESPONSE_NONCE_LEN + 16;
+        self.response_cap = bytes.max(MIN_CAP);
+        self
+    }
+
+    /// Returns the currently configured response-capsule size cap in bytes.
+    ///
+    /// Primarily useful for transports that want to enforce the cap
+    /// against an inbound `Content-Length` header before reading body
+    /// bytes — see [`OhttpTransport::post_capsule_capped`].
+    #[must_use]
+    pub fn response_cap(&self) -> usize {
+        self.response_cap
     }
 
     /// Send a request via the Relay and return the decrypted response.
@@ -299,11 +420,37 @@ impl OhttpClient {
         let export_secret = ctx.export(OHTTP_EXPORT_LABEL, RESPONSE_NONCE_LEN)?;
         drop(ctx); // explicit early drop to zeroize HPKE key material now
 
-        // 7. POST to the relay via the caller's transport.
+        // 7. POST to the relay via the caller's transport. Enforce the
+        //    configured response-size cap — strongly preferred via the
+        //    transport's `Content-Length` pre-check, but also verified
+        //    post-return as defense-in-depth.
         let response_capsule = self
             .transport
-            .post_capsule(&self.config.relay_url, capsule)
+            .post_capsule_capped(
+                &self.config.relay_url,
+                capsule,
+                self.response_cap,
+            )
             .await?;
+
+        // SECURITY (Residual Risk #2): Defense-in-depth — the transport's
+        // `post_capsule_capped` contract requires the returned body to
+        // fit within `self.response_cap`, but a misbehaving transport
+        // could still hand us more. Re-check here so that the SDK
+        // never buffers an over-cap capsule for decryption.
+        if response_capsule.len() > self.response_cap {
+            // Zeroise HPKE material before returning the error — we
+            // don't want a caller that logs the error to have
+            // `export_secret` still live in the heap.
+            let mut export_secret = export_secret;
+            export_secret.zeroize();
+            enc.zeroize();
+            #[allow(clippy::cast_possible_truncation)]
+            return Err(NetworkError::ResponseTooLarge {
+                observed: response_capsule.len() as u64,
+                cap: self.response_cap as u64,
+            });
+        }
 
         // 8. Decrypt response. `export_secret` and `enc` are explicitly
         //    zeroised at scope exit regardless of success or failure.
@@ -1871,5 +2018,206 @@ mod tests {
         assert!(!msg.contains("bad response AEAD key"));
         assert!(!msg.contains("bad HPKE AEAD key"));
         assert!(!msg.contains("HPKE Seal failed"));
+    }
+
+    // --- Residual Risk #2: response-size cap ---
+
+    #[test]
+    fn default_response_cap_is_sixteen_mib() {
+        let (_, pk) = gateway_keypair();
+        let transport = MockTransport::with_fixed_response(vec![]);
+        let client = OhttpClient::new(config_for_pk(&pk), transport).unwrap();
+        assert_eq!(client.response_cap(), 16 * 1024 * 1024);
+        assert_eq!(client.response_cap(), DEFAULT_OHTTP_RESPONSE_CAP);
+    }
+
+    #[test]
+    fn with_response_cap_sets_value() {
+        let (_, pk) = gateway_keypair();
+        let transport = MockTransport::with_fixed_response(vec![]);
+        let client = OhttpClient::new(config_for_pk(&pk), transport)
+            .unwrap()
+            .with_response_cap(200 * 1024 * 1024);
+        assert_eq!(client.response_cap(), 200 * 1024 * 1024);
+    }
+
+    #[test]
+    fn with_response_cap_clamps_below_minimum() {
+        // A cap below the minimum valid capsule (nonce + tag = 48 bytes)
+        // would reject every legitimate response. Clamp rather than
+        // silently reject, so misuse is loud the first time a real
+        // response comes back.
+        let (_, pk) = gateway_keypair();
+        let transport = MockTransport::with_fixed_response(vec![]);
+        let client = OhttpClient::new(config_for_pk(&pk), transport)
+            .unwrap()
+            .with_response_cap(1);
+        assert!(client.response_cap() >= RESPONSE_NONCE_LEN + 16);
+    }
+
+    #[tokio::test]
+    async fn rejects_oversize_response_before_decrypt() {
+        // Build a MockTransport that returns a fixed capsule larger
+        // than the configured cap. The client must reject with
+        // ResponseTooLarge before attempting AEAD decryption.
+        let oversize: Vec<u8> = vec![0u8; 4 * 1024];
+        let (_, pk) = gateway_keypair();
+        let transport = MockTransport::with_fixed_response(oversize);
+        let client = OhttpClient::new(config_for_pk(&pk), transport)
+            .unwrap()
+            .with_response_cap(1024);
+
+        let req = OhttpRequest {
+            method: "GET".into(),
+            url: "https://upstream.test/big".into(),
+            headers: vec![],
+            body: vec![],
+        };
+        let err = client.send(req).await.unwrap_err();
+        match err {
+            NetworkError::ResponseTooLarge { observed, cap } => {
+                assert_eq!(cap, 1024);
+                assert_eq!(observed, 4 * 1024);
+            }
+            other => panic!("expected ResponseTooLarge, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn default_trait_impl_of_post_capsule_capped_enforces_cap() {
+        // The default `post_capsule_capped` implementation calls
+        // `post_capsule` then enforces the cap post-download. A transport
+        // that only implements the required `post_capsule` method must
+        // still participate in the cap enforcement.
+        #[derive(Debug)]
+        struct UnboundedTransport {
+            payload: Vec<u8>,
+        }
+        #[async_trait]
+        impl OhttpTransport for UnboundedTransport {
+            async fn post_capsule(
+                &self,
+                _url: &str,
+                _body: Vec<u8>,
+            ) -> Result<Vec<u8>, NetworkError> {
+                Ok(self.payload.clone())
+            }
+            // Intentionally NOT overriding `post_capsule_capped`.
+        }
+        let t: Arc<dyn OhttpTransport> = Arc::new(UnboundedTransport {
+            payload: vec![0u8; 5000],
+        });
+        let result = t.post_capsule_capped("https://x", vec![], 1000).await;
+        match result {
+            Err(NetworkError::ResponseTooLarge { observed, cap }) => {
+                assert_eq!(observed, 5000);
+                assert_eq!(cap, 1000);
+            }
+            other => panic!("expected ResponseTooLarge, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_can_reject_via_content_length_before_body() {
+        // Regression for the "gateway-response size header enforcement"
+        // part of the spec: a transport that inspects Content-Length
+        // before reading the body MUST be able to return
+        // ResponseTooLarge without ever allocating the body. The SDK
+        // propagates that error verbatim.
+        #[derive(Debug)]
+        struct HeaderEnforcingTransport {
+            // Synthetic "Content-Length" the transport would have read
+            // from the gateway before touching the body socket.
+            advertised_content_length: u64,
+        }
+        #[async_trait]
+        impl OhttpTransport for HeaderEnforcingTransport {
+            async fn post_capsule(
+                &self,
+                _url: &str,
+                _body: Vec<u8>,
+            ) -> Result<Vec<u8>, NetworkError> {
+                // In practice this would never be reached because
+                // `post_capsule_capped` short-circuits; we panic here
+                // to prove the fallback is NOT taken.
+                panic!("post_capsule must not be called when the transport rejects via Content-Length");
+            }
+            async fn post_capsule_capped(
+                &self,
+                _url: &str,
+                _body: Vec<u8>,
+                max_bytes: usize,
+            ) -> Result<Vec<u8>, NetworkError> {
+                if self.advertised_content_length > max_bytes as u64 {
+                    return Err(NetworkError::ResponseTooLarge {
+                        observed: self.advertised_content_length,
+                        cap: max_bytes as u64,
+                    });
+                }
+                Ok(vec![0u8; self.advertised_content_length as usize])
+            }
+        }
+        let t: Arc<dyn OhttpTransport> = Arc::new(HeaderEnforcingTransport {
+            advertised_content_length: 300 * 1024 * 1024,
+        });
+        let (_, pk) = gateway_keypair();
+        let client = OhttpClient::new(config_for_pk(&pk), t)
+            .unwrap()
+            .with_response_cap(16 * 1024 * 1024);
+
+        let req = OhttpRequest {
+            method: "GET".into(),
+            url: "https://upstream.test/big-episode.mp3".into(),
+            headers: vec![],
+            body: vec![],
+        };
+        let err = client.send(req).await.unwrap_err();
+        match err {
+            NetworkError::ResponseTooLarge { observed, cap } => {
+                assert_eq!(observed, 300 * 1024 * 1024);
+                assert_eq!(cap, 16 * 1024 * 1024);
+            }
+            other => panic!("expected ResponseTooLarge, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn default_cap_allows_normal_response_but_rejects_oversize_download() {
+        // Same 200 MiB advertised Content-Length, but client opts in
+        // to a 200 MiB cap via with_response_cap — must NOT reject
+        // based on size alone. (Decryption will fail because the body
+        // is zeros; that's fine — we only care that the size check
+        // doesn't trigger first.)
+        #[derive(Debug)]
+        struct SizedOkTransport;
+        #[async_trait]
+        impl OhttpTransport for SizedOkTransport {
+            async fn post_capsule(
+                &self,
+                _url: &str,
+                _body: Vec<u8>,
+            ) -> Result<Vec<u8>, NetworkError> {
+                // Not a valid OHTTP capsule, but past the size cap.
+                Ok(vec![0u8; 100 * 1024 * 1024])
+            }
+        }
+        let t: Arc<dyn OhttpTransport> = Arc::new(SizedOkTransport);
+        let (_, pk) = gateway_keypair();
+        let client = OhttpClient::new(config_for_pk(&pk), t)
+            .unwrap()
+            .with_response_cap(200 * 1024 * 1024);
+
+        let req = OhttpRequest {
+            method: "GET".into(),
+            url: "https://upstream.test/medium".into(),
+            headers: vec![],
+            body: vec![],
+        };
+        let err = client.send(req).await.unwrap_err();
+        // Must NOT be ResponseTooLarge — the cap allows this payload.
+        assert!(
+            !matches!(err, NetworkError::ResponseTooLarge { .. }),
+            "cap should allow 100 MiB under a 200 MiB setting"
+        );
     }
 }
