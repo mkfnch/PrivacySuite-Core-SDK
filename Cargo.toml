@@ -25,7 +25,13 @@ networking = ["dep:hickory-resolver", "dep:tokio-socks", "dep:tokio"]
 # `OhttpTransport` impl — the SDK intentionally does not ship an HTTP
 # client to keep the supply chain minimal. See `networking::ohttp`.
 ohttp = ["networking", "dep:async-trait"]
-full = ["auth", "storage", "sync", "networking", "ohttp"]
+# High-level HTTP client composing DoH / OHTTP / Tor tiers (G1). Pulls
+# in `reqwest` with a minimal, rustls-only feature set. Gated behind
+# its own feature so SDK consumers that only want the lower-level
+# primitives (DoH, OHTTP trait, TorClient) don't drag in an HTTP
+# client stack. See `networking::privacy_client`.
+http = ["networking", "ohttp", "dep:reqwest", "dep:futures-util"]
+full = ["auth", "storage", "sync", "networking", "ohttp", "http"]
 
 [dependencies]
 # --- Crypto primitives (always available) ---
@@ -97,6 +103,33 @@ serde_json = { version = "=1", optional = true }
 # version already in Cargo.lock via the existing transitive graph, which
 # keeps multiple-versions clean.
 async-trait = { version = "=0.1.89", optional = true }
+
+# --- High-level HTTP client (optional: "http" feature) ---
+# SECURITY: reqwest is allow-listed in deny.toml as a permitted
+# transitive network dependency; bringing it in as a direct dep
+# (gated behind `http`) keeps the supply-chain story explicit.
+# default-features = false drops the default native-tls path — the
+# SDK is RustCrypto/rustls only (openssl / openssl-sys are banned in
+# deny.toml).
+#
+# Minimal feature set:
+#   * `rustls-tls`  — pure-Rust TLS, no openssl
+#   * `gzip`, `brotli` — RSS/podcast CDNs routinely compress; decoding
+#     inside the tier client applies the response-size cap to
+#     *decoded* bytes, matching what higher layers see.
+#   * `socks`       — required for the Tor tier's `socks5h://` proxy
+#   * `stream`      — required so `PrivacyClient::fetch` can enforce
+#     the response-size cap without buffering the full body first.
+#   * `http2`       — HTTP/2 multiplexing; mainstream clients speak h2,
+#     leaving it off would hurt fingerprint parity.
+reqwest = { version = "=0.12.28", default-features = false, features = [
+    "rustls-tls",
+    "gzip",
+    "brotli",
+    "socks",
+    "stream",
+    "http2",
+], optional = true }
 
 [dev-dependencies]
 # SECURITY: Dev dependencies also pinned to prevent test environment drift.

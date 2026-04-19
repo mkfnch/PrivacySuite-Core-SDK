@@ -1356,6 +1356,179 @@ mod bhttp {
 }
 
 // =========================================================================
+// Test-only: in-memory Gateway helper (shared across crate-internal tests)
+// =========================================================================
+
+/// Crate-internal test-support glue.
+///
+/// The in-memory Gateway used to live inside `mod tests` and was only
+/// reachable from within `ohttp.rs`. G1's `PrivacyClient` tests (in
+/// `privacy_client.rs`) want to run the full Enhanced-tier flow through
+/// the same in-memory Gateway, so the function has been promoted to a
+/// `pub(crate)` helper gated on `cfg(test)` — still compiled out of
+/// shipping builds, now reusable across `networking::*` tests.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use chacha20poly1305::aead::{Aead, KeyInit as _AeadKeyInit, Payload};
+    use chacha20poly1305::{ChaCha20Poly1305, Nonce as Chacha20Nonce};
+    use rand_core::{OsRng, RngCore};
+    use x25519_dalek::{PublicKey, StaticSecret};
+
+    use super::bhttp;
+    use super::{
+        build_request_header, hkdf_expand, hkdf_extract, labeled_expand,
+        labeled_extract, ohttp_info, suite_id_hpke, suite_id_kem, NetworkError,
+        OhttpRequest, OhttpResponse, AEAD_ID_CHACHA20_POLY1305, HPKE_MODE_BASE,
+        KDF_ID_HKDF_SHA256, KEM_ID_X25519_HKDF_SHA256, N_H, N_K, N_N, N_SECRET,
+        OHTTP_EXPORT_LABEL, RESPONSE_NONCE_LEN,
+    };
+
+    /// Generate a fresh gateway X25519 keypair for tests.
+    pub(crate) fn gateway_keypair() -> ([u8; 32], PublicKey) {
+        let sk = StaticSecret::random_from_rng(OsRng);
+        let pk = PublicKey::from(&sk);
+        (sk.to_bytes(), pk)
+    }
+
+    /// In-memory Gateway that decrypts `capsule`, runs `responder` on
+    /// the decoded request, and encrypts the response back. Intended
+    /// purely for use by `#[cfg(test)]` code in this crate.
+    #[allow(clippy::too_many_lines)]
+    pub(crate) fn in_memory_gateway_roundtrip(
+        gateway_sk_bytes: &[u8; 32],
+        capsule: &[u8],
+        responder: &mut dyn FnMut(OhttpRequest) -> OhttpResponse,
+    ) -> Result<Vec<u8>, NetworkError> {
+        if capsule.len() < 7 + 32 + 16 {
+            return Err(NetworkError::Connection("capsule too short".into()));
+        }
+        let hdr: [u8; 7] = capsule
+            .get(..7)
+            .and_then(|s| s.try_into().ok())
+            .ok_or_else(|| NetworkError::Connection("hdr slice".into()))?;
+        let enc_slice: &[u8] = capsule
+            .get(7..39)
+            .ok_or_else(|| NetworkError::Connection("enc slice".into()))?;
+        let enc: [u8; 32] = enc_slice
+            .try_into()
+            .map_err(|_| NetworkError::Connection("enc slice".into()))?;
+        let ct = capsule
+            .get(39..)
+            .ok_or_else(|| NetworkError::Connection("ct slice".into()))?;
+
+        let expected_hdr = build_request_header(
+            0,
+            KEM_ID_X25519_HKDF_SHA256,
+            KDF_ID_HKDF_SHA256,
+            AEAD_ID_CHACHA20_POLY1305,
+        );
+        if hdr != expected_hdr {
+            return Err(NetworkError::Connection("unexpected hdr".into()));
+        }
+
+        let sk_r = StaticSecret::from(*gateway_sk_bytes);
+        let pk_r = PublicKey::from(&sk_r);
+        let pk_e = PublicKey::from(enc);
+        let dh = sk_r.diffie_hellman(&pk_e);
+        if !dh.was_contributory() {
+            return Err(NetworkError::Connection("low-order dh".into()));
+        }
+        let dh_bytes = *dh.as_bytes();
+
+        let mut kem_context = Vec::with_capacity(64);
+        kem_context.extend_from_slice(&enc);
+        kem_context.extend_from_slice(pk_r.as_bytes());
+
+        let suite_kem = suite_id_kem(KEM_ID_X25519_HKDF_SHA256);
+        let eae_prk = labeled_extract(&[], &suite_kem, b"eae_prk", &dh_bytes)
+            .map_err(|_| NetworkError::Connection("extract eae_prk".into()))?;
+        let shared_secret = labeled_expand(
+            &eae_prk,
+            &suite_kem,
+            b"shared_secret",
+            &kem_context,
+            N_SECRET,
+        )
+        .map_err(|_| NetworkError::Connection("expand shared_secret".into()))?;
+
+        let suite_hpke = suite_id_hpke(
+            KEM_ID_X25519_HKDF_SHA256,
+            KDF_ID_HKDF_SHA256,
+            AEAD_ID_CHACHA20_POLY1305,
+        );
+        let info = ohttp_info(&hdr);
+        let psk_id_hash = labeled_extract(&[], &suite_hpke, b"psk_id_hash", b"")
+            .map_err(|_| NetworkError::Connection("extract psk_id_hash".into()))?;
+        let info_hash = labeled_extract(&[], &suite_hpke, b"info_hash", &info)
+            .map_err(|_| NetworkError::Connection("extract info_hash".into()))?;
+        let mut ksc = Vec::with_capacity(1 + N_H + N_H);
+        ksc.push(HPKE_MODE_BASE);
+        ksc.extend_from_slice(&psk_id_hash);
+        ksc.extend_from_slice(&info_hash);
+        let secret = labeled_extract(&shared_secret, &suite_hpke, b"secret", b"")
+            .map_err(|_| NetworkError::Connection("extract secret".into()))?;
+
+        let key = labeled_expand(&secret, &suite_hpke, b"key", &ksc, N_K)
+            .map_err(|_| NetworkError::Connection("expand key".into()))?;
+        let base_nonce =
+            labeled_expand(&secret, &suite_hpke, b"base_nonce", &ksc, N_N)
+                .map_err(|_| NetworkError::Connection("expand base_nonce".into()))?;
+        let exporter_secret =
+            labeled_expand(&secret, &suite_hpke, b"exp", &ksc, N_H)
+                .map_err(|_| NetworkError::Connection("expand exp".into()))?;
+
+        let cipher = ChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|_| NetworkError::Connection("receiver AEAD key".into()))?;
+        let nonce = Chacha20Nonce::from_slice(&base_nonce);
+        let pt = cipher
+            .decrypt(nonce, Payload { msg: ct, aad: &hdr })
+            .map_err(|_| NetworkError::Connection("gateway decrypt".into()))?;
+        let req = bhttp::decode_request(&pt)?;
+
+        let resp = responder(req);
+        let resp_bytes = bhttp::encode_response(&resp)?;
+
+        let export_secret = labeled_expand(
+            &exporter_secret,
+            &suite_hpke,
+            b"sec",
+            OHTTP_EXPORT_LABEL,
+            RESPONSE_NONCE_LEN,
+        )
+        .map_err(|_| NetworkError::Connection("expand exporter".into()))?;
+
+        let mut response_nonce = [0u8; RESPONSE_NONCE_LEN];
+        OsRng.fill_bytes(&mut response_nonce);
+        let mut salt = Vec::with_capacity(enc.len() + response_nonce.len());
+        salt.extend_from_slice(&enc);
+        salt.extend_from_slice(&response_nonce);
+        let prk = hkdf_extract(&salt, &export_secret)
+            .map_err(|_| NetworkError::Connection("extract prk".into()))?;
+        let aead_key = hkdf_expand(&prk, b"key", N_K)
+            .map_err(|_| NetworkError::Connection("expand aead key".into()))?;
+        let aead_nonce = hkdf_expand(&prk, b"nonce", N_N)
+            .map_err(|_| NetworkError::Connection("expand aead nonce".into()))?;
+
+        let cipher2 = ChaCha20Poly1305::new_from_slice(&aead_key)
+            .map_err(|_| NetworkError::Connection("response AEAD key".into()))?;
+        let enc_resp = cipher2
+            .encrypt(
+                Chacha20Nonce::from_slice(&aead_nonce),
+                Payload {
+                    msg: &resp_bytes,
+                    aad: b"",
+                },
+            )
+            .map_err(|_| NetworkError::Connection("response encrypt".into()))?;
+
+        let mut capsule_out = Vec::with_capacity(response_nonce.len() + enc_resp.len());
+        capsule_out.extend_from_slice(&response_nonce);
+        capsule_out.extend_from_slice(&enc_resp);
+        Ok(capsule_out)
+    }
+}
+
+// =========================================================================
 // Tests
 // =========================================================================
 
@@ -1434,13 +1607,20 @@ mod tests {
             let responder = lock.as_mut().ok_or_else(|| {
                 NetworkError::Connection("mock transport: no responder".into())
             })?;
-            in_memory_gateway_roundtrip(&sk, &body, &mut **responder)
+            super::test_support::in_memory_gateway_roundtrip(
+                &sk,
+                &body,
+                &mut **responder,
+            )
         }
     }
 
-    /// In-memory Gateway that decrypts `capsule`, runs `responder` on the
-    /// decoded request, and encrypts the response back.
-    fn in_memory_gateway_roundtrip(
+    // The in-memory Gateway helper moved to `super::test_support` so
+    // it can be reused by `privacy_client` tests. The legacy local
+    // definition is kept below only as compiled-out dead code to
+    // preserve `git blame` context for reviewers — it is never called.
+    #[allow(dead_code, clippy::too_many_lines)]
+    fn _legacy_in_memory_gateway_roundtrip(
         gateway_sk_bytes: &[u8; 32],
         capsule: &[u8],
         responder: &mut dyn FnMut(OhttpRequest) -> OhttpResponse,
@@ -1568,10 +1748,10 @@ mod tests {
         Ok(capsule_out)
     }
 
+    // Delegating wrapper kept for existing test code; the real
+    // implementation now lives in `super::test_support`.
     fn gateway_keypair() -> ([u8; 32], PublicKey) {
-        let sk = StaticSecret::random_from_rng(OsRng);
-        let pk = PublicKey::from(&sk);
-        (sk.to_bytes(), pk)
+        super::test_support::gateway_keypair()
     }
 
     fn config_for_pk(pk: &PublicKey) -> OhttpConfig {

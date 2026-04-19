@@ -588,3 +588,58 @@ pub fn validate_url(input: String) -> Result<String, PrivacySuiteError> {
     let validated = privacysuite_core_sdk::privacy_utils::url::validate_url(&input)?;
     Ok(validated.as_str().to_owned())
 }
+
+// ---------------------------------------------------------------------------
+// G1: PrivacyClient (DEFERRED FOR FFI — Phase 2)
+// ---------------------------------------------------------------------------
+//
+// `PrivacyClient` composes the DoH / OHTTP / Tor tiers behind one API. It is
+// fully available to Rust callers today via the `http` feature of the core
+// crate (`privacysuite_core_sdk::networking::PrivacyClient`). Exposing it
+// across UniFFI is deferred to a follow-up release for the reasons below —
+// a UniFFI shim in this crate would force significant shape changes to the
+// Rust API and block the Phase-1 migration of Music, Podcasts, Weather,
+// RSS, DarkGIFs, Blackout, Screenshots, and Telephoto.
+//
+// ## Why it's deferred
+//
+//  * UniFFI 0.31's async-method export has rough edges for complex return
+//    types. `PrivacyResponse` contains `Vec<(String, String)>` for headers,
+//    which is legal but requires extra scaffolding for both Kotlin and
+//    Swift. Getting that wrong at the FFI boundary is much more expensive
+//    than adding it in Phase 2.
+//
+//  * The first wave of consumers (Music / Podcasts / Weather / RSS /
+//    DarkGIFs / Blackout / Screenshots / Telephoto) are all Tauri+Rust
+//    backends on Android. They consume `privacysuite-core-sdk` as a Cargo
+//    dependency directly, not through UniFFI, so the Rust API is enough
+//    for all eight. Native-Kotlin consumers (Voice, Scanner, Scratchpad)
+//    don't make network calls today and can be addressed in Phase 2 with a
+//    properly-shaped async UniFFI export.
+//
+// ## Phase 2 shape (tracking)
+//
+// When the export lands it will look roughly like:
+//
+// ```ignore
+// #[derive(uniffi::Object)]
+// pub struct PrivacyClientHandle { inner: PrivacyClient }
+//
+// #[uniffi::export(async_runtime = "tokio")]
+// impl PrivacyClientHandle {
+//     #[uniffi::constructor]
+//     pub fn new(config: PrivacyClientConfigFfi) -> Result<Arc<Self>, PrivacySuiteError>;
+//     pub async fn fetch(
+//         &self,
+//         method: String, url: String,
+//         headers: Vec<HttpHeader>, body: Vec<u8>,
+//     ) -> Result<PrivacyResponseFfi, PrivacySuiteError>;
+//     pub async fn fetch_with_decoys(
+//         &self,
+//         real: FetchSpecFfi, decoys: Vec<FetchSpecFfi>, k: u32,
+//     ) -> Result<PrivacyResponseFfi, PrivacySuiteError>;
+// }
+// ```
+//
+// See `networking::privacy_client` in the core crate for the authoritative
+// Rust-side API and behaviour.
