@@ -5,6 +5,8 @@
 //! - **[`aead`]** — XChaCha20-Poly1305 authenticated encryption.
 //! - **[`stream`]** — Chunked streaming AEAD (STREAM construction) for files.
 //! - **[`hash`]** — BLAKE3 content hashing for integrity and deduplication.
+//! - **[`blind_index`]** — Deterministic HMAC-BLAKE3 index tokens for FTS
+//!   over encrypted columns.
 //! - **[`mnemonic`]** — BIP39 24-word recovery phrase generation and recovery.
 //! - **[`pairing`]** — X25519 device pairing, BLAKE3 key derivation, Ed25519 signing.
 //! - **[`pinning`]** — TLS certificate pinning (SHA-256 SPKI verification).
@@ -35,6 +37,7 @@
 //! ```
 
 pub mod aead;
+pub mod blind_index;
 pub mod hash;
 pub mod hkdf;
 pub mod kdf;
