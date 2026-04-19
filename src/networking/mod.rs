@@ -482,6 +482,12 @@ pub mod ohttp;
 #[cfg(feature = "ohttp")]
 pub use ohttp::{OhttpClient, OhttpRequest, OhttpResponse, OhttpTransport};
 
+#[cfg(feature = "http")]
+pub mod privacy_client;
+
+#[cfg(feature = "http")]
+pub use privacy_client::{FetchSpec, PrivacyClient, PrivacyClientConfig, PrivacyResponse};
+
 #[cfg(test)]
 mod tests {
     use super::*;
