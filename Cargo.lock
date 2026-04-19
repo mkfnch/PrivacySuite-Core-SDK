@@ -1809,7 +1809,7 @@ dependencies = [
 
 [[package]]
 name = "privacysuite-ffi"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "privacysuite-core-sdk",
  "thiserror 2.0.18",

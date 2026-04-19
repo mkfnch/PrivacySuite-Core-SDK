@@ -161,12 +161,17 @@ pub enum PrivacySuiteError {
     /// The user dismissed the biometric / credential prompt.
     #[error("user cancelled authentication")]
     KeystoreUserCancelled,
-    /// A lower-level Keystore JNI failure. The inner message is
+    /// A lower-level Keystore JNI failure. The inner detail string is
     /// sanitised (never contains key material).
-    #[error("keystore error: {message}")]
+    ///
+    /// Field name is `detail` rather than `message` because the UniFFI
+    /// Kotlin binding generates error variants as `Throwable` subclasses,
+    /// and `Throwable.message` is already a member — a field named
+    /// `message` collides.
+    #[error("keystore error: {detail}")]
     KeystoreIo {
         /// Short, non-sensitive description of where the failure occurred.
-        message: String,
+        detail: String,
     },
 }
 
@@ -992,7 +997,7 @@ mod keystore_ffi {
                 KeystoreError::HardwareBackedRequired => Self::KeystoreHardwareBackedRequired,
                 KeystoreError::BiometricRequired => Self::KeystoreBiometricRequired,
                 KeystoreError::UserCancelled => Self::KeystoreUserCancelled,
-                KeystoreError::Io(message) => Self::KeystoreIo { message },
+                KeystoreError::Io(detail) => Self::KeystoreIo { detail },
                 KeystoreError::Crypto(c) => Self::from(c),
             }
         }
@@ -1075,7 +1080,7 @@ mod keystore_ffi {
                 .inner
                 .lock()
                 .map_err(|_| PrivacySuiteError::KeystoreIo {
-                    message: "keystore vault mutex poisoned".into(),
+                    detail: "keystore vault mutex poisoned".into(),
                 })?;
             match guard.as_ref() {
                 Some(v) => Ok(v.is_hardware_backed()?),
@@ -1089,7 +1094,7 @@ mod keystore_ffi {
                 .inner
                 .lock()
                 .map_err(|_| PrivacySuiteError::KeystoreIo {
-                    message: "keystore vault mutex poisoned".into(),
+                    detail: "keystore vault mutex poisoned".into(),
                 })?;
             match guard.as_ref() {
                 Some(v) => Ok(v.is_strongbox_backed()?),
@@ -1107,7 +1112,7 @@ mod keystore_ffi {
                 .inner
                 .lock()
                 .map_err(|_| PrivacySuiteError::KeystoreIo {
-                    message: "keystore vault mutex poisoned".into(),
+                    detail: "keystore vault mutex poisoned".into(),
                 })?;
             match guard.as_ref() {
                 Some(v) => Ok(v.wrap_vault_key(&key.inner)?),
@@ -1126,7 +1131,7 @@ mod keystore_ffi {
                 .inner
                 .lock()
                 .map_err(|_| PrivacySuiteError::KeystoreIo {
-                    message: "keystore vault mutex poisoned".into(),
+                    detail: "keystore vault mutex poisoned".into(),
                 })?;
             match guard.as_ref() {
                 Some(v) => {
@@ -1144,7 +1149,7 @@ mod keystore_ffi {
                 .inner
                 .lock()
                 .map_err(|_| PrivacySuiteError::KeystoreIo {
-                    message: "keystore vault mutex poisoned".into(),
+                    detail: "keystore vault mutex poisoned".into(),
                 })?;
             match guard.take() {
                 Some(v) => Ok(v.delete()?),
