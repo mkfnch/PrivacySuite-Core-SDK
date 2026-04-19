@@ -14,7 +14,7 @@ rust-version = "1.88"
 description = "Zero-knowledge cryptographic foundation for BoomLeft applications"
 authors = ["BoomLeft LLC"]
 license = "Proprietary"
-repository = "https://github.com/mkfnch/PrivacySuite-Core-SDK"
+repository = "https://github.com/BoomLeft/PrivacySuite-Core-SDK"
 publish = false
 
 [features]

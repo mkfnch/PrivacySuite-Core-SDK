@@ -123,7 +123,7 @@ The base crate (no features) gives you AEAD, KDF, BIP39, device pairing, BLAKE3,
 ### Development
 
 ```bash
-git clone https://github.com/mkfnch/PrivacySuite-Core-SDK
+git clone https://github.com/BoomLeft/PrivacySuite-Core-SDK
 cd PrivacySuite-Core-SDK
 cargo build --all-features
 cargo test --all-features

@@ -3,7 +3,7 @@
 ## Context
 
 While integrating PrivacySuite Core SDK into
-[boomleft-voice](https://github.com/mkfnch/boomleft-voice), Claude recommended:
+[boomleft-voice](https://github.com/BoomLeft/boomleft-voice), Claude recommended:
 
 > "Rather than trying to retrofit the SDK into Voice, consider publishing
 > privacysuite-core as a standalone Rust crate with Android JNI bindings (via
