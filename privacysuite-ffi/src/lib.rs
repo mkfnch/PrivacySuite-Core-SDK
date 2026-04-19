@@ -40,7 +40,7 @@
 
 use std::sync::Arc;
 
-use privacysuite_core_sdk::crypto::{aead, hash, hkdf, kdf, keys, mnemonic, util};
+use privacysuite_core_sdk::crypto::{aead, blind_index, hash, hkdf, kdf, keys, mnemonic, util};
 use privacysuite_core_sdk::error::CryptoError;
 
 uniffi::setup_scaffolding!();
@@ -351,6 +351,98 @@ impl MnemonicHandle {
         let key = self.inner.derive_vault_key(&passphrase)?;
         Ok(Arc::new(VaultKeyHandle { inner: key }))
     }
+}
+
+/// Opaque handle wrapping a [`blind_index::BlindIndexKey`] (256-bit
+/// deterministic HMAC-BLAKE3 key used to generate FTS tokens over
+/// encrypted columns).
+///
+/// Key material lives only on the Rust heap and is zeroized when the last
+/// `Arc` reference is dropped (via `BlindIndexKey`'s `ZeroizeOnDrop`).
+/// Kotlin / Swift callers hold a pointer to this `Arc` and never see raw
+/// bytes — tokens are the only values that cross the FFI boundary.
+#[derive(uniffi::Object)]
+pub struct BlindIndexKeyHandle {
+    inner: blind_index::BlindIndexKey,
+}
+
+#[uniffi::export]
+impl BlindIndexKeyHandle {
+    /// Construct a `BlindIndexKeyHandle` from 32 raw bytes.
+    ///
+    /// Prefer [`blind_index_derive_key`] in production; direct
+    /// construction is for tests and for callers that already hold a
+    /// derived key (e.g., one stored in the platform keystore).
+    #[uniffi::constructor]
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Arc<Self>, PrivacySuiteError> {
+        // SECURITY: length validation at FFI boundary prevents type confusion.
+        if bytes.len() != blind_index::BLIND_INDEX_TOKEN_LEN {
+            return Err(PrivacySuiteError::InvalidLength);
+        }
+        let mut arr = [0u8; blind_index::BLIND_INDEX_TOKEN_LEN];
+        arr.copy_from_slice(&bytes);
+        Ok(Arc::new(Self {
+            inner: blind_index::BlindIndexKey::from_bytes(arr),
+        }))
+    }
+
+    /// Produce the deterministic index token for `term` under this key.
+    ///
+    /// Same input bytes + same key always yield the same 32-byte token.
+    /// Callers typically normalise (lowercase, trim) `term` before
+    /// calling — the SDK doesn't impose a normalisation.
+    #[must_use]
+    pub fn token(&self, term: Vec<u8>) -> Vec<u8> {
+        blind_index::token(&self.inner, &term).to_vec()
+    }
+}
+
+/// Derive a [`BlindIndexKeyHandle`] from a `VaultKeyHandle` + domain-
+/// separation `context`.
+///
+/// Use a unique context per searchable column. The canonical form is
+/// `"<appname> <year> blind-index <field>"` — for example
+/// `"scanner 2026 blind-index receipt_title"`.
+#[uniffi::export]
+pub fn blind_index_derive_key(
+    master: &VaultKeyHandle,
+    context: String,
+) -> Result<Arc<BlindIndexKeyHandle>, PrivacySuiteError> {
+    let key = blind_index::BlindIndexKey::derive(&master.inner, &context)?;
+    Ok(Arc::new(BlindIndexKeyHandle { inner: key }))
+}
+
+/// Produce a deterministic blind-index token for `term` under `key`.
+///
+/// Convenience free function mirroring
+/// [`BlindIndexKeyHandle::token`] — provided so Kotlin / Swift can call
+/// `blindIndexToken(key, term)` without an intermediate method binding if
+/// that reads better at the call site.
+#[uniffi::export]
+#[must_use]
+pub fn blind_index_token(key: &BlindIndexKeyHandle, term: Vec<u8>) -> Vec<u8> {
+    blind_index::token(&key.inner, &term).to_vec()
+}
+
+/// Constant-time comparison of two 32-byte blind-index tokens.
+///
+/// Returns `false` if either input is not exactly
+/// [`blind_index::BLIND_INDEX_TOKEN_LEN`] bytes — callers should always
+/// hold token-sized buffers, but wrong-length inputs are non-matches by
+/// definition.
+#[uniffi::export]
+#[must_use]
+pub fn blind_index_tokens_equal(a: Vec<u8>, b: Vec<u8>) -> bool {
+    if a.len() != blind_index::BLIND_INDEX_TOKEN_LEN
+        || b.len() != blind_index::BLIND_INDEX_TOKEN_LEN
+    {
+        return false;
+    }
+    let mut a_arr = [0u8; blind_index::BLIND_INDEX_TOKEN_LEN];
+    let mut b_arr = [0u8; blind_index::BLIND_INDEX_TOKEN_LEN];
+    a_arr.copy_from_slice(&a);
+    b_arr.copy_from_slice(&b);
+    blind_index::tokens_equal(&a_arr, &b_arr)
 }
 
 // ---------------------------------------------------------------------------
