@@ -57,7 +57,7 @@ argon2 = "=0.5"
 chacha20poly1305 = "=0.10"
 # SECURITY: zeroize aligned with opaque-ke 3.0's ^1.8 constraint; 1.8.2
 # is the most recent stable at audit time and is reproducibly pinned.
-zeroize = "=1.8.2"
+zeroize = "=1.9.0"
 # SECURITY: We rely only on OsRng for OS randomness — never thread_rng /
 # rand::rng. That lets us depend on the minimal rand_core + getrandom
 # stack instead of the full rand crate (which ships RUSTSEC-2026-0097
