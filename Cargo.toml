@@ -57,7 +57,7 @@ argon2 = "=0.5"
 chacha20poly1305 = "=0.10"
 # SECURITY: zeroize aligned with opaque-ke 3.0's ^1.8 constraint; 1.8.2
 # is the most recent stable at audit time and is reproducibly pinned.
-zeroize = "=1.8.2"
+zeroize = "=1.9.0"
 # SECURITY: We rely only on OsRng for OS randomness — never thread_rng /
 # rand::rng. That lets us depend on the minimal rand_core + getrandom
 # stack instead of the full rand crate (which ships RUSTSEC-2026-0097
@@ -119,7 +119,7 @@ serde_json = { version = "=1", optional = true }
 # (so the SDK never ships a reqwest/hyper stack of its own). 0.1.89 is the
 # version already in Cargo.lock via the existing transitive graph, which
 # keeps multiple-versions clean.
-async-trait = { version = "=0.1.89", optional = true }
+async-trait = { version = "=0.1.91", optional = true }
 
 # --- High-level HTTP client (optional: "http" feature) ---
 # SECURITY: reqwest is allow-listed in deny.toml as a permitted
